@@ -1,0 +1,26 @@
+# Text files are stored and checked out with LF on every platform, whatever core.autocrlf
+# says: shell scripts and Dockerfiles run in Linux containers, gofmt expects LF.
+* text=auto eol=lf
+
+*.sh          text eol=lf
+*.go          text eol=lf
+go.mod        text eol=lf
+*.py          text eol=lf
+*.js          text eol=lf
+*.mjs         text eol=lf
+*.php         text eol=lf
+*.rs          text eol=lf
+*.c           text eol=lf
+*.json        text eol=lf
+*.yaml        text eol=lf
+*.yml         text eol=lf
+*.toml        text eol=lf
+*.txt         text eol=lf
+*.md          text eol=lf
+Dockerfile    text eol=lf
+Dockerfile.*  text eol=lf
+.dockerignore text eol=lf
+.gitignore    text eol=lf
+
+# Scripts without an extension
+runtimes/**/runr-wasm-exec text eol=lf

@@ -1,0 +1,16 @@
+*.log
+.DS_Store
+.idea
+.vscode/
+*.swp
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Credentials: never commit tokens, keys or Docker configs
+.env
+.env.*
+*.pem
+*.key
+.docker/

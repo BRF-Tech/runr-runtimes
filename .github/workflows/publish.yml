@@ -1,0 +1,148 @@
+# Builds, smoke-tests and pushes the CPU images to ghcr.io/brf-tech/runr/ with the workflow's own
+# GITHUB_TOKEN (each package grants this repository write access: PACKAGES.md):
+#   - push to main: the images whose sources changed (ci/images.sh changed before..after); a
+#     change that touches a GPU image too gets a notice to run the heavy-images workflow
+#   - by hand: the images named (keys of ci/images.sh, "cpu" for all of them, "languages")
+#   - weekly: the language runtimes (exec-python, -nodejs, -go, -php), whose tags follow the
+#     upstream patch releases and new versions
+# Every job builds its image(s) locally, smoke-tests them and only then pushes (ci.sh … --push):
+# multi-arch (linux/amd64 + linux/arm64) through ci.sh's own buildx builder, the ML runtime CPU
+# images (linux/amd64) exactly as tested.
+name: Publish images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      images:
+        description: 'Images: keys of ci/images.sh (python nodejs go php wrapper wasm-rust wasm-go wasm-js wasm-python wasm-exec pytorch tensorflow hf-serve), "cpu" (all of them) or "languages"'
+        required: true
+        default: languages
+  schedule:
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CRANE_VERSION: v0.21.2
+  CRANE_SHA256: 897e7c342db072ba76531246fc18fbf3e8e298688b6ecf98916770984b263866
+
+jobs:
+  select:
+    name: Images to publish
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      any: ${{ steps.select.outputs.any }}
+      languages: ${{ steps.select.outputs.languages }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          INPUT: ${{ inputs.images }}
+        run: |
+          case "$EVENT" in
+            push) selected=$(bash ci/images.sh changed "$BEFORE" "$AFTER") ;;
+            workflow_dispatch) selected=$(bash ci/images.sh select "$INPUT") ;;
+            schedule) selected=$(bash ci/images.sh select languages) ;;
+          esac
+          cpu=$(bash ci/images.sh list cpu)
+          languages=$(bash ci/images.sh list languages)
+          keys=() gpu=() lang=false
+          for key in $selected; do
+            if grep -qx "$key" <<< "$cpu"; then keys+=("$key"); else gpu+=("$key"); fi
+            if grep -qx "$key" <<< "$languages"; then lang=true; fi
+          done
+          if [ "${#gpu[@]}" -gt 0 ]; then
+            echo "::notice::GPU images touched (${gpu[*]}): run the heavy-images workflow to publish them"
+          fi
+          echo "Images: ${keys[*]:-none}"
+          echo "matrix=$(bash ci/images.sh json ${keys[@]+"${keys[@]}"})" >> "$GITHUB_OUTPUT"
+          if [ "${#keys[@]}" -gt 0 ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
+          echo "languages=${lang}" >> "$GITHUB_OUTPUT"
+
+  # The language runtimes build on base images of the reqs mirror: a version `ci.sh build`
+  # discovers upstream is mirrored first, once for every language job
+  bases:
+    name: Mirror the base images
+    needs: select
+    if: needs.select.outputs.languages == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # crane reads the login above from the Docker config
+      - name: Install crane (pinned, checksum verified)
+        run: |
+          curl -fsSL -o /tmp/crane.tar.gz "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "${CRANE_SHA256}  /tmp/crane.tar.gz" | sha256sum -c -
+          sudo tar -xzf /tmp/crane.tar.gz -C /usr/local/bin crane
+      - run: ./ci.sh mirror-bases
+
+  publish:
+    name: ${{ matrix.image }}
+    needs: [select, bases]
+    if: ${{ !cancelled() && needs.select.outputs.any == 'true' && (needs.bases.result == 'success' || needs.bases.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        image: ${{ fromJSON(needs.select.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          docker image prune --all --force >/dev/null
+          df -h /
+      # arm64 under emulation; binfmt from the reqs mirror, not Docker Hub
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: ghcr.io/brf-tech/runr/reqs/binfmt:latest
+          platforms: arm64
+      # The builder ci.sh uses for multi-arch pushes (BUILDER_NAME): a docker-container builder that
+      # never becomes the runner's current one (the local smoke builds stay on the default
+      # builder); ci.sh removes it after the push
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          name: runr-multiarch
+          driver: docker-container
+          use: false
+          cleanup: false
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: ci.sh --push (build, smoke test, push)
+        env:
+          IMAGE: ${{ matrix.image }}
+          BUILDER_NAME: runr-multiarch
+        run: |
+          read -r -a args <<< "$(bash ci/images.sh command "$IMAGE")"
+          ./ci.sh "${args[@]}" --push

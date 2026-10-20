@@ -1,0 +1,165 @@
+# Pull requests (and pushes to branches other than main): lint, the shell tests, the Dockerfile
+# and reqs-mirror checks, the wrapper's Go tests, hf-serve's Python tests, the catalog manifests
+# against RunR's runtime schema, and a local build + smoke test (no push) of every CPU image the
+# change touches (ci/images.sh). The GPU images are built by the heavy-images workflow, which
+# runs on any branch by hand.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SHELLCHECK_VERSION: v0.11.0
+  SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+  ACTIONLINT_VERSION: 1.7.12
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+
+jobs:
+  lint:
+    name: shellcheck + actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install shellcheck and actionlint (pinned, checksums verified)
+        run: |
+          curl -fsSL -o /tmp/shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp
+          sudo install -m 0755 "/tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          curl -fsSL -o /tmp/actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint
+      - name: shellcheck
+        run: shellcheck -x -S warning ci.sh lib/*.sh ci/*.sh test/*.sh runtimes/*/entrypoint.sh runtimes/wasm-exec/runr-wasm-exec
+      - name: actionlint
+        run: actionlint -color
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The files of the checked-out commit, not the history; allowlist: .gitleaks.toml
+      - run: |
+          mkdir -p /tmp/tree && git archive HEAD | tar -x -C /tmp/tree
+          docker run --rm -v /tmp/tree:/src:ro -w /src ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            dir . --config .gitleaks.toml --redact --no-banner --verbose
+
+  checks:
+    name: Shell tests + Dockerfile + reqs mirror checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # ci.sh without Docker or a registry: build/push/smoke flow, smoke tests, the mirror's Docker
+      # Hub fallback, the EOL report, the image selection of the workflows, the catalog manifests
+      - run: for t in test/*_test.sh; do echo "── $t"; bash "$t"; done
+      # No Docker Hub base image; Spin RUN steps with OTEL_SDK_DISABLED=true (docker-container builders)
+      - run: bash ci/check-dockerfiles.sh
+      # Every ghcr.io/brf-tech/runr/reqs/* image this repository references is on a mirror list
+      - run: bash ci/check-reqs-mirror.sh
+
+  wrapper:
+    name: Wrapper (gofmt, go vet, go test -race)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wrapper
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: wrapper/go.mod
+          cache: false
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  hf-serve:
+    name: hf-serve (pytest, fake pipelines)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hf-serve
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-test.txt
+      - run: python -m pytest -q tests
+
+  catalog:
+    name: Catalog manifests (RunR runtime schema)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: pip install check-jsonschema==0.38.2
+      # The schema of BRF-Tech/runr's main branch, the API that bundles these manifests
+      # (api/resources/runtimes/builtin.json); the API validates them further when it bundles them
+      - run: >
+          check-jsonschema
+          --schemafile https://raw.githubusercontent.com/BRF-Tech/runr/main/api/resources/runtimes/runtime.schema.json
+          runtimes/*/runtime.yaml
+
+  select:
+    name: Images the change touches
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      any: ${{ steps.select.outputs.any }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: select
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed=$(bash ci/images.sh changed "$BASE" "$HEAD")
+          cpu=$(bash ci/images.sh list cpu)
+          keys=()
+          for key in $changed; do
+            if grep -qx "$key" <<< "$cpu"; then keys+=("$key"); else echo "::notice::${key}: a GPU image, built by the heavy-images workflow (run it on this branch by hand)"; fi
+          done
+          echo "Images: ${keys[*]:-none}"
+          echo "matrix=$(bash ci/images.sh json ${keys[@]+"${keys[@]}"})" >> "$GITHUB_OUTPUT"
+          if [ "${#keys[@]}" -gt 0 ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
+
+  build:
+    name: Build + smoke ${{ matrix.image }} (no push)
+    needs: select
+    if: needs.select.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.select.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          docker image prune --all --force >/dev/null
+          df -h /
+      - name: ci.sh (local build + smoke test)
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          read -r -a args <<< "$(bash ci/images.sh command "$IMAGE")"
+          ./ci.sh "${args[@]}"

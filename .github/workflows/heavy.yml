@@ -1,0 +1,104 @@
+# The heavy GPU images, apart from the publish workflow so normal pushes stay fast: exec-pytorch
+# and exec-tensorflow <X.Y>-gpu (CUDA, several GB each) and hf-serve <version>-cuda, linux/amd64
+# only, one image per job on a runner with its preinstalled toolchains removed for disk space.
+#   - by hand, on any branch: the images named (pytorch-gpu tensorflow-gpu hf-serve-cuda, or
+#     "gpu"); push: false builds and smoke-tests without pushing (a branch's GPU check)
+#   - weekly: exec-pytorch and exec-tensorflow -gpu (their CUDA wheels and bases)
+# GitHub's runners have no GPU: the smoke test checks the CUDA build (torch / TensorFlow built for
+# CUDA, the ops on the CPU; hf-serve: a CUDA torch and diffusers) and says the GPU check was skipped
+# — what `ci.sh ml-runtimes` and `ci.sh hf-serve` do on any host without a GPU (ML_SMOKE_GPU=auto).
+# A push goes to ghcr.io with the workflow's own GITHUB_TOKEN, exactly the image the smoke test ran.
+name: Heavy images (GPU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      images:
+        description: 'Images: pytorch-gpu tensorflow-gpu hf-serve-cuda, or "gpu" for all three'
+        required: true
+        default: gpu
+      push:
+        description: 'Push the images once their smoke tests passed (false: build and smoke-test only)'
+        type: boolean
+        default: true
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: heavy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  select:
+    name: Images to build
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT: ${{ inputs.images }}
+        run: |
+          if [ "$EVENT" = schedule ]; then
+            selected="pytorch-gpu tensorflow-gpu"
+          else
+            selected=$(bash ci/images.sh select "$INPUT")
+          fi
+          gpu=$(bash ci/images.sh list gpu)
+          keys=()
+          for key in $selected; do
+            if grep -qx "$key" <<< "$gpu"; then
+              keys+=("$key")
+            else
+              echo "::error::${key} is a CPU image: the publish workflow builds it"
+              exit 1
+            fi
+          done
+          echo "Images: ${keys[*]}"
+          echo "matrix=$(bash ci/images.sh json "${keys[@]}")" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.image }}
+    needs: select
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.select.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A -gpu image is 5–7 GB, its build needs about twice that: the runner's preinstalled
+      # toolchains go first
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift /usr/local/share/powershell \
+            /usr/local/share/chromium /usr/local/lib/node_modules
+          docker image prune --all --force >/dev/null
+          docker builder prune --all --force >/dev/null
+          df -h /
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: github.event_name == 'schedule' || inputs.push
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: ci.sh (build, smoke test, push)
+        env:
+          IMAGE: ${{ matrix.image }}
+          PUSH: ${{ (github.event_name == 'schedule' || inputs.push) && '--push' || '' }}
+          ML_SMOKE_GPU: auto
+        run: |
+          read -r -a args <<< "$(bash ci/images.sh command "$IMAGE")"
+          ./ci.sh "${args[@]}" ${PUSH:+"$PUSH"}
+          df -h /

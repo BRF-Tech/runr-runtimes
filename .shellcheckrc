@@ -1,0 +1,5 @@
+# ci.sh sources lib/*.sh (bash, no shebang) and the tests source them: variables are set in one file
+# and read in another (SC2034 assigned but unused, SC2154 used but not assigned)
+shell=bash
+external-sources=true
+disable=SC2034,SC2154

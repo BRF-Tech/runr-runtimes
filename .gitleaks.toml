@@ -1,0 +1,14 @@
+# Secret scanning of the tree:
+#   gitleaks dir . --config .gitleaks.toml --redact
+
+title = "RunR runtimes"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Made-up tokens in the Go and Python test suites"
+paths = [
+  '''_test\.go$''',
+  '''(^|/)hf-serve/tests/''',
+]
