@@ -98,9 +98,25 @@ filter_nodejs_lts() {
 
 # ── Docker Hub and Dockerfile base images ──
 
+# registry_qualified REF — does an image reference name its registry? Its first path segment is a
+# registry host when it has a "." or a ":" or is localhost (ghcr.io/…, quay.io/…,
+# registry.local:5000/…, localhost/…); alpine:3.21 and grafana/k6:1.8.2 are Docker Hub's
+registry_qualified() {
+  case "$1" in
+    */*) ;;
+    *) return 1 ;;
+  esac
+  case "${1%%/*}" in
+    localhost|*.*|*:*) return 0 ;;
+  esac
+  return 1
+}
+
 # dockerhub_path SOURCE — the Docker Hub repository path of an image: alpine:3.21 →
-# library/alpine:3.21; tinygo/tinygo:0.42.0 and a tag@digest stay as they are
+# library/alpine:3.21; tinygo/tinygo:0.42.0 and a tag@digest stay as they are. A reference with
+# its registry (registry_qualified) is no Docker Hub image: no output, status 1.
 dockerhub_path() {
+  registry_qualified "$1" && return 1
   case "${1%%[:@]*}" in
     */*) echo "$1" ;;
     *) echo "library/$1" ;;
@@ -109,9 +125,11 @@ dockerhub_path() {
 
 # dockerhub_digest PATH — Docker Hub's digest of a repository path (library/alpine:3.21; a
 # path@sha256:… is its own digest), read with a HEAD request, which the anonymous pull limit does
-# not count: crane when it is installed, otherwise curl against the registry API
+# not count: crane when it is installed, otherwise curl against the registry API. A reference with
+# its registry (registry_qualified) is no Docker Hub image: no request, no output, status 1.
 dockerhub_digest() {
   local path="$1" repo ref token digest
+  registry_qualified "$path" && return 1
   case "$path" in
     *@sha256:*) echo "${path##*@}"; return 0 ;;
   esac

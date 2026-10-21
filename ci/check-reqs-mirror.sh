@@ -141,8 +141,9 @@ done
 
 if [ "$missing" -gt 0 ]; then
   echo ""
-  echo "Add each as \"<image>:<tag>|<Docker Hub source>\" to REQS_IMAGES in lib/mirror.sh"
-  echo "(the mirror workflow copies it with \`ci.sh mirror-reqs\`), or reference a mirrored image."
+  echo "Add each as \"<image>:<tag>|<source>\" to REQS_IMAGES in lib/mirror.sh, the source a Docker Hub"
+  echo "repository with its tag or a reference with its registry (quay.io/<org>/<name>:<tag>; the mirror"
+  echo "workflow copies it with \`ci.sh mirror-reqs\`), or reference a mirrored image."
   exit 1
 fi
 

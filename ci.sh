@@ -50,7 +50,8 @@ Environment:
   ML_SMOKE_GPU    -gpu / -cuda smoke tests: auto (default: on the GPU where docker run --gpus all
                   gives one) | 1 (a GPU is required) | 0 (never on the GPU)
   REQS_UPSTREAMS  Mirror sources in order (default: docker.io mirror.gcr.io public.ecr.aws/docker);
-                  a Docker Hub mirror is copied from only by Docker Hub's digest
+                  a Docker Hub mirror is copied from only by Docker Hub's digest; a REQS_IMAGES
+                  source with its registry (quay.io/…) is copied from that registry alone
 
 Examples:
   ci.sh build python             Build + smoke-test the Python images (local, this host's platform)

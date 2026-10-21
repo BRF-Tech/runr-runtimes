@@ -1,8 +1,9 @@
 # The reqs mirror, ghcr.io/brf-tech/runr/reqs/: every third-party image RunR uses (REQS_IMAGES of
 # lib/mirror.sh) and the base images of the language runtimes (mirror-bases), copied multi-arch
 # from Docker Hub — registry to registry with crane, a pull-through mirror of Docker Hub only by
-# Docker Hub's digest when Docker Hub refuses (its anonymous pull limit). Pushed with the
-# workflow's own GITHUB_TOKEN (each reqs package grants this repository write access: PACKAGES.md).
+# Docker Hub's digest when Docker Hub refuses (its anonymous pull limit); an image listed with its
+# registry (quay.io/…, ghcr.io/…) from that registry alone. Pushed with the workflow's own
+# GITHUB_TOKEN (each reqs package grants this repository write access: PACKAGES.md).
 #   - weekly, both lists (a tag that moves upstream, such as alpine:3.21 or a patch release, is
 #     copied again)
 #   - by hand: both, or one list; mirror-reqs of the images named; a dry run lists what it would copy

@@ -5,8 +5,11 @@
 # Downloads no layers (registry-to-registry), only manifest + blob redirect.
 # Requires: crane (go-containerregistry)
 #
-# Upstreams (REQS_UPSTREAMS, tried in order): Docker Hub, then pull-through mirrors of it that
-# serve its repositories under their own prefix — mirror.gcr.io/library/alpine,
+# A source that names its registry (ghcr.io/…, quay.io/…: registry_qualified of lib/common.sh) is
+# copied from that registry directly — no Docker Hub, no mirror of it.
+#
+# Upstreams of a Docker Hub source (REQS_UPSTREAMS, tried in order): Docker Hub, then pull-through
+# mirrors of it that serve its repositories under their own prefix — mirror.gcr.io/library/alpine,
 # public.ecr.aws/docker/library/alpine (official images only). When Docker Hub refuses a copy
 # (its anonymous pull limit: 429 TOOMANYREQUESTS), the image is copied from the first mirror that
 # has Docker Hub's digest of it, by that digest: `crane digest docker.io/…` is a HEAD request,
@@ -16,7 +19,9 @@
 REQS_UPSTREAMS="${REQS_UPSTREAMS:-docker.io mirror.gcr.io public.ecr.aws/docker}"
 
 # target|source — target = $REGISTRY/reqs/{target}, source = a Docker Hub repository with its tag
-# (library/ implied for official images), or tag@digest for an image pinned by digest
+# (library/ implied for official images), or tag@digest for an image pinned by digest, or a
+# reference with its registry (ghcr.io/org/name:tag, quay.io/org/name:tag) for an image Docker Hub
+# does not carry
 #
 # Every $REGISTRY/reqs/ image RunR references — the product, its Helm chart, Compose files, CI and
 # e2e in BRF-Tech/runr, and the files of this repository — is either here or a runtime base image
@@ -98,9 +103,24 @@ _require_crane() {
 }
 
 # _crane_copy SOURCE TARGET DRY_RUN — SOURCE (a REQS_IMAGES source) from the first upstream of
-# REQS_UPSTREAMS that has it; from a mirror only by Docker Hub's digest
+# REQS_UPSTREAMS that has it; from a mirror only by Docker Hub's digest. A source with its registry
+# (registry_qualified) from that registry only.
 _crane_copy() {
   local source="$1" target="$2" dry_run="$3" path upstream want="" err note=""
+  if registry_qualified "$source"; then
+    if [ "$dry_run" = "1" ]; then
+      echo "  [dry-run] ${source} → ${target}"
+      return 0
+    fi
+    echo -n "  ${source} → ${target} ... "
+    if err=$(crane copy "$source" "$target" 2>&1); then
+      echo -e "${GREEN}ok${NC}"
+      return 0
+    fi
+    echo -e "${RED}fail${NC} ${source%%/*}: $(_crane_error "$err");"
+    return 1
+  fi
+
   path="$(dockerhub_path "$source")"
   if [ "$dry_run" = "1" ]; then
     echo "  [dry-run] docker.io/${path} → ${target}"

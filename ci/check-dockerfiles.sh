@@ -24,18 +24,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 source "${ROOT}/lib/common.sh"
 
-# Is an image reference on Docker Hub? (no registry host: library/… or <org>/<name>)
+# Is an image reference on Docker Hub? (Docker Hub's host, or no registry host: library/… or
+# <org>/<name>; registry_qualified of lib/common.sh)
 on_docker_hub() {
-  local ref="$1" first
-  case "$ref" in
-    */*) first="${ref%%/*}" ;;
-    *) return 0 ;;
-  esac
-  case "$first" in
+  case "${1%%/*}" in
     docker.io|index.docker.io|registry-1.docker.io) return 0 ;;
-    localhost|*.*|*:*) return 1 ;;
-    *) return 0 ;;
   esac
+  ! registry_qualified "$1"
 }
 
 # file:line of every RUN step that runs `spin` without OTEL_SDK_DISABLED=true in its stage
