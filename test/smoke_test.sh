@@ -5,7 +5,8 @@
 # CUDA build). Checks that each smoke test passes a working image and fails every broken one, that
 # the language runtimes get their handler in /app/code and are called over http from a curl
 # container in the server's network namespace (no published port) and once with
-# RUNR_MODE=schedule, and that the containers are removed.
+# RUNR_MODE=schedule, that the containers are removed, and that the language version they report
+# is a release (SMOKE_FULL_VERSION, the version of the image's patch tag).
 #
 #   bash test/smoke_test.sh
 # shellcheck source-path=SCRIPTDIR
@@ -103,6 +104,7 @@ for spec in python:3.12:3.12.7:main.py nodejs:22.22:22.22.0:main.js php:8.4:8.4.
   lang_version="$reported" sum=42 status=200 schedule_trigger=schedule
   smoke "$runtime" "$version" || { cat "$tmp/out"; fail "${runtime}: a working image failed"; }
   grep -q '✓ smoke test' "$tmp/out" || fail "${runtime}: $(cat "$tmp/out")"
+  [ "$SMOKE_FULL_VERSION" = "$reported" ] || fail "${runtime}: the full version (of the patch tag) is '${SMOKE_FULL_VERSION}', not ${reported}"
   [ "$(grep -c "^copied ${file}$" "$calls")" = 2 ] || fail "${runtime}: ${file} not copied into both containers: $(grep '^copied' "$calls")"
   grep -q "^docker cp - runr-smoke-${runtime}-[0-9]*:/app/code$" "$calls" || fail "${runtime}: not copied to /app/code"
   grep -q "^docker create --name runr-smoke-${runtime}-[0-9]*-schedule -e RUNR_MODE=schedule registry.test/exec-${runtime}:${version}$" "$calls" \
@@ -123,6 +125,9 @@ for spec in python:3.12:3.12.7:main.py nodejs:22.22:22.22.0:main.js php:8.4:8.4.
   status=200 schedule_trigger=http
   smoke "$runtime" "$version" && fail "${runtime}: a schedule run that was not one passed"
   schedule_trigger=schedule
+  lang_version="${version}.0+dev"
+  smoke "$runtime" "$version" && fail "${runtime}: a version that is not a release passed (no patch tag can carry it)"
+  [ -z "$SMOKE_FULL_VERSION" ] || fail "${runtime}: a failed smoke test left SMOKE_FULL_VERSION=${SMOKE_FULL_VERSION}"
 done
 current=ruby
 runtime_smoke registry.test/exec-ruby:3.4 ruby 3.4 > "$tmp/out" 2>&1 && fail "a runtime without a smoke handler passed"

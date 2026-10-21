@@ -6,7 +6,8 @@
 # buildx and plain docker build — pulls its base images (--pull) and labels the image with this
 # repository (org.opencontainers.image.source); a push is a buildx build in the command's own
 # builder (never the host's current one, removed afterwards) that comes after the smoke test of
-# every image of the command; --push --no-smoke is refused.
+# every image of the command; --push --no-smoke is refused. The language runtimes are pushed as
+# patches (lib/patch.sh, tested in test/patch_test.sh): here to a registry that has none yet.
 #
 #   bash test/build_push_test.sh
 # shellcheck source-path=SCRIPTDIR
@@ -26,6 +27,10 @@ source "$here/lib/build.sh"
 source "$here/lib/build-wasm.sh"
 # shellcheck source=../lib/build-hf-serve.sh
 source "$here/lib/build-hf-serve.sh"
+# shellcheck source=../lib/registry.sh
+source "$here/lib/registry.sh"
+# shellcheck source=../lib/patch.sh
+source "$here/lib/patch.sh"
 
 REGISTRY="registry.test/brf-tech"
 log="$tmp/docker.log"
@@ -33,9 +38,17 @@ local_images="$tmp/local-images"
 : > "$local_images"
 
 # docker: records the command; `image inspect IMAGE` finds the images listed in $local_images,
-# `image inspect -f …` answers for a built image (its size, an ID of its name)
+# `image inspect -f …` answers for a built image (its size, an ID of its name); a build with
+# --metadata-file FILE writes an image digest into FILE
 docker() {
   echo "docker $*" >> "$log"
+  local arg prev=""
+  for arg in "$@"; do
+    if [ "$prev" = --metadata-file ]; then
+      printf '{"containerimage.digest": "sha256:%064d"}' "${#arg}" > "$arg"
+    fi
+    prev="$arg"
+  done
   case "$1 ${2:-}" in
     "image inspect")
       case "$*" in
@@ -48,7 +61,7 @@ docker() {
   return 0
 }
 # the smoke tests: record the image they test
-runtime_smoke() { echo "smoke $1" >> "$log"; }
+runtime_smoke() { echo "smoke $1" >> "$log"; SMOKE_FULL_VERSION="$3.7"; }
 wrapper_smoke() { echo "smoke $1 $2" >> "$log"; }
 wasm_smoke() { echo "smoke $1" >> "$log"; }
 hf_serve_smoke() { echo "smoke $1 $2 $3" >> "$log"; }
@@ -58,6 +71,9 @@ discover_versions() { echo "3.12"; }
 check_eol() { echo "supported|2099-10-31"; }
 # shellcheck disable=SC2034 # read by cmd_build
 RUNTIME_DEFS=("python|library/python|-slim|3.10|major.minor")
+# the registry: no image of the language runtimes published yet (the first patch is r1)
+registry_manifest() { return 3; }
+registry_tags_checked() { :; }
 
 # run ARGS… — a ci.sh command in a subshell with ci.sh's shell options; its exit status must be 0
 run() {
@@ -122,8 +138,8 @@ echo "ok - build commands exit 0 with and without --push, every build with --pul
 run cmd_build --push python
 grep -qE "^docker build --pull .*--build-arg VERSION=3.12 -t ${REGISTRY}/exec-python:3.12 ${here}/runtimes/python$" "$log" \
   || fail "exec-python: local build $(grep '^docker build' "$log")"
-grep -qE "^docker buildx build .*--platform linux/amd64,linux/arm64 .*--build-arg VERSION=3.12 -t ${REGISTRY}/exec-python:3.12 .*${here}/runtimes/python$" "$log" \
-  || fail "exec-python: multi-arch push $(grep '^docker buildx build' "$log")"
+grep -qE "^docker buildx build .*--platform linux/amd64,linux/arm64 .*-t ${REGISTRY}/exec-python:3.12 -t ${REGISTRY}/exec-python:3.12.7-r1 .*--build-arg VERSION=3.12 --output type=image,push=true,.* ${here}/runtimes/python$" "$log" \
+  || fail "exec-python: multi-arch push of the patch $(grep '^docker buildx build' "$log")"
 grep -qxF "smoke ${REGISTRY}/exec-python:3.12" "$log" || fail "exec-python: smoke $(grep '^smoke' "$log")"
 out=$( (set -euo pipefail; cmd_build ruby) 2>&1) && fail "an unknown runtime passed: $out"
 run cmd_build nodejs
