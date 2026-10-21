@@ -11,6 +11,7 @@ source "${SCRIPT_DIR}/lib/build-wasm.sh"
 source "${SCRIPT_DIR}/lib/build-ml.sh"
 source "${SCRIPT_DIR}/lib/build-hf-serve.sh"
 source "${SCRIPT_DIR}/lib/mirror.sh"
+source "${SCRIPT_DIR}/lib/registry.sh"
 source "${SCRIPT_DIR}/lib/eol.sh"
 
 # ── Help ──
