@@ -118,7 +118,7 @@ flow() { # flow ARG... — cmd_patch with Docker Hub, the builds, the publish an
   : > "$tmp/flow"
   (
     discover_language_versions() { declare -gA DISCOVERED=([php]=" 8.2 8.3 8.4" [python]=" 3.12 3.13"); }
-    do_build() { echo "build $1" >> "$tmp/flow"; }
+    do_build() { echo "build $1" >> "$tmp/flow"; echo "build-args $*" >> "$tmp/flow"; }
     runtime_smoke() { echo "smoke $1" >> "$tmp/flow"; SMOKE_FULL_VERSION="$3.9"; }
     patch_push_images() { echo "publish $*" >> "$tmp/flow"; }
     feed_tools() { :; }
@@ -132,13 +132,19 @@ flow --only php php python --versions php:8.3,python:3.12 --level zero-day --rea
 grep -qxF "smoke ${REGISTRY}/exec-php:8.3" "$tmp/flow" || fail "--only php: not smoke-tested"
 grep -qxF "publish 1 php|8.3|8.3.9|${here}/runtimes/php|--build-arg|VERSION=8.3" "$tmp/flow" || fail "--only php: publish $(grep '^publish' "$tmp/flow")"
 grep -q '^feed' "$tmp/flow" && fail "--no-feed updated the feed"
+# the PHP security guard (PHP_FIXED_RELEASES of runtimes/php/Dockerfile) runs in every patch build:
+# the patch builds the runtime's own Dockerfile and never overrides the guard
+grep -q '^ARG PHP_FIXED_RELEASES=' "$here/runtimes/php/Dockerfile" || fail "runtimes/php/Dockerfile has no PHP_FIXED_RELEASES guard"
+grep -qxF "build-args ${REGISTRY}/exec-php:8.3 ${here}/runtimes/php 0 --build-arg VERSION=8.3" "$tmp/flow" \
+  || fail "--only php: the build $(grep '^build-args' "$tmp/flow")"
+grep -q 'PHP_FIXED_RELEASES' "$tmp/flow" && fail "a patch build overrides PHP_FIXED_RELEASES"
 flow php --versions all --level routine || fail "patch php (dry run): $(cat "$tmp/out")"
 [ "$(grep -c '^build ' "$tmp/flow")" = 3 ] || fail "all versions: $(cat "$tmp/flow")"
 grep -q '^publish 0 ' "$tmp/flow" || fail "a dry run published with push"
 grep -q '^feed 0  .* --results ' "$tmp/flow" || fail "the dry run's feed update: $(grep '^feed' "$tmp/flow")"
 flow php --versions 8.1 --level routine && fail "a version that is not current passed"
 grep -q 'php 8.1 is not a current version' "$tmp/out" || fail "not current: $(cat "$tmp/out")"
-echo "ok - ci.sh patch: the versions named built, smoke-tested and published, --only one runtime, the feed after"
+echo "ok - ci.sh patch: the versions named built (PHP with its security guard), smoke-tested and published, --only one runtime, the feed after"
 
 # --- publishing an image as a patch ---------------------------------------------------------------------------
 log="$tmp/calls"
