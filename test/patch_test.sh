@@ -33,6 +33,9 @@ source "$here/lib/feed.sh"
 
 REGISTRY="ghcr.io/brf-tech/runr"
 export PATCH_NOW="2026-10-21T14:30:00Z"
+# warnings as a shell prints them, also when the tests run in a workflow (CI sets GITHUB_ACTIONS);
+# a workflow's ::warning:: only where a test sets GITHUB_ACTIONS itself
+unset GITHUB_ACTIONS
 
 # --- the next patch tag, the full version ----------------------------------------------------------------
 [ "$(patch_next_tag 8.3.36)" = "8.3.36-r1" ] || fail "first patch: $(patch_next_tag 8.3.36)"
