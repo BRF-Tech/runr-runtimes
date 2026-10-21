@@ -90,6 +90,25 @@ REQS_IMAGES=(
   "helm:3.15|alpine/helm:3.15"
   "binfmt:latest|tonistiigi/binfmt:latest"
 
+  # ── Load tests: the k6 runner (LoadTestManifests::IMAGE, docs/load-test.md) ──
+  "k6:1.8.2|grafana/k6:1.8.2"
+
+  # ── Secret stores: External Secrets Operator in the region and the OpenBao RunR runs there
+  #    (config/secrets.php, docs/secret-stores.md) ──
+  "external-secrets:v0.19.2|ghcr.io/external-secrets/external-secrets:v0.19.2"
+  "openbao:2.4.1|openbao/openbao:2.4.1"
+
+  # ── Global projects: the PowerDNS Authoritative server of a region's global DNS
+  #    (config/global_dns.php, docs/global-projects.md) ──
+  "pdns-auth:5.0.8|powerdns/pdns-auth-50:5.0.8"
+
+  # ── Custom domains: the cert-manager a region installs where its cluster runs none
+  #    (CertManager, docs/regions.md#cert-manager) ──
+  "cert-manager-controller:v1.21.2|quay.io/jetstack/cert-manager-controller:v1.21.2"
+  "cert-manager-webhook:v1.21.2|quay.io/jetstack/cert-manager-webhook:v1.21.2"
+  "cert-manager-cainjector:v1.21.2|quay.io/jetstack/cert-manager-cainjector:v1.21.2"
+  "cert-manager-acmesolver:v1.21.2|quay.io/jetstack/cert-manager-acmesolver:v1.21.2"
+
   # ── Test ──
   "kindest-node:v1.32.0|kindest/node:v1.32.0"
 )
