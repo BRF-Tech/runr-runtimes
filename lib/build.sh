@@ -90,27 +90,19 @@ push_built() {
   cleanup_buildx
 }
 
-# cmd_build — Discover + EOL check + build the language runtime images
-# (exec-<runtime>:<major.minor> of python, nodejs, go and php: all four, or the ones named)
-cmd_build() {
-  build_options "ci.sh build" "$@" || return 1
-  local push="$_push" smoke="$_smoke" only=() arg
-  for arg in ${_args[@]+"${_args[@]}"}; do
-    case "$arg" in
-      python|nodejs|go|php) only+=("$arg") ;;
-      *) echo -e "${RED}unknown argument: ${arg} (python, nodejs, go, php, --push, --no-smoke)${NC}"; return 1 ;;
-    esac
-  done
+# discover_language_versions [RUNTIME...] — the versions of the language runtimes (all four, or the
+# ones named) that are not end-of-life, from Docker Hub's tags of their base images and
+# endoflife.date: DISCOVERED[<runtime>]="<version> <version>…" (a global), with a report
+discover_language_versions() {
+  local def runtime repo suffix min_ver depth versions ver result status active_versions
+  declare -gA DISCOVERED=()
 
   echo "Fetching available versions from Docker Hub..."
   echo ""
 
-  local total=0 def runtime repo suffix min_ver depth versions ver result status
-  declare -A DISCOVERED
-
   for def in "${RUNTIME_DEFS[@]}"; do
     IFS='|' read -r runtime repo suffix min_ver depth <<< "$def"
-    if [ "${#only[@]}" -gt 0 ] && [[ " ${only[*]} " != *" ${runtime} "* ]]; then
+    if [ "$#" -gt 0 ] && [[ " $* " != *" ${runtime} "* ]]; then
       continue
     fi
 
@@ -127,7 +119,7 @@ cmd_build() {
       versions=$(filter_nodejs_lts "$versions")
     fi
 
-    local active_versions=""
+    active_versions=""
     for ver in $versions; do
       result=$(check_eol "$runtime" "$ver")
       status="${result%%|*}"
@@ -143,13 +135,33 @@ cmd_build() {
     DISCOVERED[$runtime]="$active_versions"
     echo ""
   done
+}
+
+# cmd_build — Discover + EOL check + build the language runtime images
+# (exec-<runtime>:<major.minor> of python, nodejs, go and php: all four, or the ones named).
+# --push publishes each one as a routine patch (lib/patch.sh): exec-<runtime>:<major.minor> and
+# the immutable <full version>-r<n>, or nothing when the build is the image already published.
+cmd_build() {
+  build_options "ci.sh build" "$@" || return 1
+  local push="$_push" smoke="$_smoke" only=() arg
+  for arg in ${_args[@]+"${_args[@]}"}; do
+    case "$arg" in
+      python|nodejs|go|php) only+=("$arg") ;;
+      *) echo -e "${RED}unknown argument: ${arg} (python, nodejs, go, php, --push, --no-smoke)${NC}"; return 1 ;;
+    esac
+  done
+  if [ "$push" = "1" ]; then
+    patch_tools || return 1
+  fi
+
+  discover_language_versions ${only[@]+"${only[@]}"}
 
   echo "========================================="
   echo "Starting build..."
   echo "========================================="
   echo ""
 
-  local built=() tag version dir
+  local total=0 def runtime repo suffix min_ver depth versions built=() tag version dir
   for def in "${RUNTIME_DEFS[@]}"; do
     IFS='|' read -r runtime repo suffix min_ver depth <<< "$def"
     versions="${DISCOVERED[$runtime]:-}"
@@ -167,23 +179,27 @@ cmd_build() {
       fi
 
       echo "==> Building ${tag}"
+      SMOKE_FULL_VERSION=""
       do_build "${tag}" "${dir}" 0 --build-arg "VERSION=${version}" || return 1
       if [ "$smoke" = "1" ]; then
         runtime_smoke "$tag" "$runtime" "$version" || return 1
       fi
-      built+=("${tag}|${dir}|--build-arg|VERSION=${version}")
+      built+=("${runtime}|${version}|${SMOKE_FULL_VERSION}|${dir}|--build-arg|VERSION=${version}")
       total=$((total + 1))
       echo ""
     done
   done
 
   if [ "$push" = "1" ] && [ "${#built[@]}" -gt 0 ]; then
-    push_built "${built[@]}" || return 1
+    # a routine patch: its reason comes from what changed (patch_publish_image)
+    patch_request_reset routine
+    patch_push_images 1 "${built[@]}" || return 1
   fi
 
   echo "========================================="
   if [ "$push" = "1" ]; then
-    echo "Done. ${total} images built, smoke-tested and pushed."
+    echo "Done. ${total} images built and smoke-tested: ${PATCH_PUBLISHED:-0} new patches pushed, ${PATCH_UNCHANGED:-0} unchanged."
+    echo "The patch feed lists them after its next update (ci.sh feed update --push)."
   else
     echo "Done. ${total} images built."
     echo "To push: ci.sh build --push"

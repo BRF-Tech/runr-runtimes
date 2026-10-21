@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-21T14:30:00Z",
+  "patches": [
+    {
+      "id": "php-8.3-8.3.36-r2",
+      "runtime": "php",
+      "version": "8.3",
+      "tag": "8.3.36-r2",
+      "image": "ghcr.io/brf-tech/runr/exec-php",
+      "digest": "sha256:8f31bb95063ae1dceef669be33d125e3e7991fdc8724004fbe6b490617641de1",
+      "level": "zero-day",
+      "reason": {
+        "en": "PHP heap overflow in the multipart parser, exploited in the wild",
+        "tr": "PHP multipart ayrıştırıcısında aktif olarak istismar edilen heap taşması"
+      },
+      "cves": ["CVE-2026-109618"],
+      "url": "https://www.php.net/ChangeLog-8.php#8.3.36",
+      "upstream": "PHP 8.3.36",
+      "published_at": "2026-10-21T14:29:12Z",
+      "deadline_at": "2026-10-24T14:28:40Z"
+    },
+    {
+      "id": "nodejs-22.23-22.23.3-r1",
+      "runtime": "nodejs",
+      "version": "22.23",
+      "tag": "22.23.3-r1",
+      "image": "ghcr.io/brf-tech/runr/exec-nodejs",
+      "digest": "sha256:5c61aa478f72d0d294b2d19525bf5a7fe0b0b979a539fbaa66b9bff3d8c8c3bc",
+      "level": "routine",
+      "reason": {
+        "en": "Upstream Node.js 22.23.3",
+        "tr": "Node.js 22.23.3 sürümüne güncellendi"
+      },
+      "cves": [],
+      "upstream": "Node.js 22.23.3",
+      "published_at": "2026-10-19T03:41:07Z"
+    },
+    {
+      "id": "python-3.12-3.12.13-r3",
+      "runtime": "python",
+      "version": "3.12",
+      "tag": "3.12.13-r3",
+      "image": "ghcr.io/brf-tech/runr/exec-python",
+      "digest": "sha256:0b15827cac5930149321dc18ad00b22cf5f8f0afcbdf53e0fe6336d6978e0fcc",
+      "level": "routine",
+      "reason": {
+        "en": "Base image refresh",
+        "tr": "Temel imaj yenilendi"
+      },
+      "cves": [],
+      "upstream": "Python 3.12.13",
+      "published_at": "2026-10-19T03:38:55Z"
+    },
+    {
+      "id": "php-8.3-8.3.36-r1",
+      "runtime": "php",
+      "version": "8.3",
+      "tag": "8.3.36-r1",
+      "image": "ghcr.io/brf-tech/runr/exec-php",
+      "digest": "sha256:36c121deef54e544f40fec1a4c615107ed85bb59fa458d18ca829a1d34928bd1",
+      "level": "routine",
+      "reason": {
+        "en": "Upstream PHP 8.3.36",
+        "tr": "PHP 8.3.36 sürümüne güncellendi"
+      },
+      "cves": [],
+      "upstream": "PHP 8.3.36",
+      "published_at": "2026-10-19T03:35:21Z"
+    }
+  ],
+  "platform": [
+    {
+      "version": "0.5.11",
+      "level": "security",
+      "reason": {
+        "en": "The API no longer echoes upload file names into error pages",
+        "tr": "API artık yükleme dosya adlarını hata sayfalarına yansıtmıyor"
+      },
+      "url": "https://github.com/BRF-Tech/runr/releases/tag/v0.5.11",
+      "published_at": "2026-10-20T09:00:00Z"
+    }
+  ]
+}

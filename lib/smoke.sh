@@ -9,7 +9,9 @@
 #                                         container in the same network namespace, so no port is
 #                                         published and the image needs no client), then runs once
 #                                         with RUNR_MODE=schedule; the language version starts with
-#                                         the tag's major.minor
+#                                         the tag's major.minor and is a release (8.3.36,
+#                                         3.15.0rc1): SMOKE_FULL_VERSION, the version of the image's
+#                                         patch tag (lib/patch.sh)
 #   wrapper_smoke IMAGE VERSION           `runr-wrapper version` prints the tag's version
 #   wasm_smoke IMAGE LANG DIR             the build image runs and carries the Spin CLI its
 #                                         Dockerfile pins (SPIN_VERSION); wasm-exec also
@@ -166,10 +168,20 @@ runtime_smoke() {
   echo "  schedule: ${schedule}"
   smoke_result http "${http:-}" "\"runtime\":\"${runtime}\"" "\"version\":\"${version}." '"sum":42' '"trigger":"http"' '}200' || rc=1
   smoke_result schedule "$schedule" '"statusCode":200' "\"version\":\"${version}." '"sum":42' '"trigger":"schedule"' || rc=1
+  # the full upstream version the image runs, as the language reports it (PHP_VERSION,
+  # process.versions.node, platform.python_version(), runtime.Version()): its patch tag is
+  # <full version>-r<n> (lib/patch.sh)
+  SMOKE_FULL_VERSION="$(printf '%s' "${http:-}" | tr -d ' \r\n' | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+  if [ "$rc" = 0 ] && ! [[ "$SMOKE_FULL_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([a-z]+[0-9]*)?$ ]]; then
+    echo -e "  ${RED}not a release version: '${SMOKE_FULL_VERSION}'${NC}"
+    rc=1
+  fi
   if [ "$rc" != 0 ]; then
+    SMOKE_FULL_VERSION=""
     echo -e "  ${RED}✗ smoke test of ${image} failed${NC}"
     return 1
   fi
+  echo "  version:  ${SMOKE_FULL_VERSION}"
   echo -e "  ${GREEN}✓ smoke test${NC}"
 }
 

@@ -1,0 +1,9 @@
+# PLACEHOLDER, NOT A KEY.
+#
+# This file becomes the public key of the patch feed's cosign key pair
+# (ghcr.io/brf-tech/runr/runtime-patches:feed). The repository owner generates the pair once and
+# replaces this whole file with the generated cosign.pub; the private key and its password go into
+# the Actions secrets RUNR_PATCH_FEED_COSIGN_KEY and RUNR_PATCH_FEED_COSIGN_PASSWORD. The steps are
+# in PACKAGES.md ("The patch feed's signing key").
+#
+# Until then `ci.sh feed … --push` and the feed jobs of the workflows refuse to publish a feed.
