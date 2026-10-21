@@ -8,6 +8,10 @@
 # Every job builds its image(s) locally, smoke-tests them and only then pushes (ci.sh … --push):
 # multi-arch (linux/amd64 + linux/arm64) through ci.sh's own buildx builder, the ML runtime CPU
 # images (linux/amd64) exactly as tested.
+# The language runtimes are published as routine patches (lib/patch.sh): a version whose build
+# differs from its published image gets the immutable tag <full version>-r<n> next to <major.minor>;
+# an unchanged one publishes nothing. The feed job then adds them to the signed patch feed and
+# deletes patch tags beyond the newest five per version (ci.sh feed update --push).
 name: Publish images
 
 on:
@@ -104,6 +108,11 @@ jobs:
     if: ${{ !cancelled() && needs.select.outputs.any == 'true' && (needs.bases.result == 'success' || needs.bases.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    # one publisher of an image at a time (the patch workflow uses the same groups): two runs must
+    # not count the same patch tag
+    concurrency:
+      group: runtime-image-${{ matrix.image }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -113,7 +122,11 @@ jobs:
       matrix:
         image: ${{ fromJSON(needs.select.outputs.matrix) }}
     steps:
+      # the history: SOURCE_DATE_EPOCH of a patch build is the time of the last commit of its
+      # directory (a shallow checkout would make every unchanged image look changed)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Free disk space
         run: |
           df -h /
@@ -143,6 +156,39 @@ jobs:
         env:
           IMAGE: ${{ matrix.image }}
           BUILDER_NAME: runr-multiarch
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           read -r -a args <<< "$(bash ci/images.sh command "$IMAGE")"
           ./ci.sh "${args[@]}" --push
+
+  # The patch feed: the language runtimes' new patches (read from the registry's patch tags),
+  # signed and published; patch tags beyond the newest five per version deleted. Also after a
+  # failed image job: the patches it pushed before reach the feed.
+  feed:
+    name: Patch feed
+    needs: [select, publish]
+    if: ${{ !cancelled() && needs.select.outputs.languages == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: patch-feed
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/patch-feed-tools
+      - name: ci.sh feed update --push (sign, publish, retention)
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUNR_PATCH_FEED_COSIGN_KEY: ${{ secrets.RUNR_PATCH_FEED_COSIGN_KEY }}
+          RUNR_PATCH_FEED_COSIGN_PASSWORD: ${{ secrets.RUNR_PATCH_FEED_COSIGN_PASSWORD }}
+        run: ./ci.sh feed update --push

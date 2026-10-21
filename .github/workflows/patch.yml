@@ -1,0 +1,229 @@
+# Patches the language runtime images on request: a zero-day (or another security fix) in PHP,
+# Node.js, Python, Go or their base images. The owner asks for a patch; the operator runs this
+# workflow (Actions → Patch runtime images → Run workflow, or gh workflow run patch.yml -f …).
+#   1. request: the inputs checked (ci.sh patch --check), the deadline fixed for every image
+#   2. bases: the base images mirrored again (ci.sh mirror-bases), so the builds get upstream's
+#      fixed bases
+#   3. one job per runtime: every version named built, smoke-tested and, when it differs from the
+#      published image, pushed as a patch of the request (exec-<runtime>:<major.minor> and the
+#      immutable <full version>-r<n>, with the sh.runr.patch.* annotations). A version whose image
+#      is unchanged gets no new patch and a warning: upstream may not have the fix yet. When its
+#      current patch already carries the fix (an earlier build picked it up), run again with
+#      promote_unchanged: that patch then takes the request's level, reason, CVEs and deadline in
+#      the feed.
+#   4. feed: the patch feed updated, signed and published (one feed writer at a time: concurrency
+#      patch-feed); patch tags beyond the newest five per version deleted
+# Pushes with the workflow's own GITHUB_TOKEN; the feed is signed with RUNR_PATCH_FEED_COSIGN_KEY
+# (PACKAGES.md).
+name: Patch runtime images
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtimes:
+        description: 'Runtimes: php nodejs python go (blank- or comma-separated) or "all"'
+        required: true
+        default: php
+      versions:
+        description: 'Versions: "all" (every current one), major.minor for one runtime (8.2,8.3,8.4,8.5), or runtime:version for several (php:8.3,python:3.12)'
+        required: true
+        default: all
+      level:
+        description: 'Level'
+        type: choice
+        options: [zero-day, critical, security, routine]
+        default: zero-day
+      reason_en:
+        description: 'Reason, English (one line; required unless routine)'
+        required: false
+        default: ''
+      reason_tr:
+        description: 'Reason, Turkish (one line; required unless routine)'
+        required: false
+        default: ''
+      cves:
+        description: 'CVE (or GHSA) ids, comma-separated'
+        required: false
+        default: ''
+      url:
+        description: 'Advisory URL (https://…)'
+        required: false
+        default: ''
+      deadline_hours:
+        description: 'Hours until instances must run the patch; empty: 72 for zero-day, 168 for critical, none otherwise'
+        required: false
+        default: ''
+      promote_unchanged:
+        description: 'A version whose build is unchanged already carries the fix: its current patch takes this level in the feed (off: it is only reported, upstream may not have the fix yet)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CRANE_VERSION: v0.21.2
+  CRANE_SHA256: 897e7c342db072ba76531246fc18fbf3e8e298688b6ecf98916770984b263866
+  # the request, read by ci.sh patch (never expanded into a script)
+  PATCH_RUNTIMES: ${{ inputs.runtimes }}
+  PATCH_VERSIONS: ${{ inputs.versions }}
+  PATCH_LEVEL: ${{ inputs.level }}
+  PATCH_REASON_EN: ${{ inputs.reason_en }}
+  PATCH_REASON_TR: ${{ inputs.reason_tr }}
+  PATCH_CVES: ${{ inputs.cves }}
+  PATCH_URL: ${{ inputs.url }}
+  PATCH_PROMOTE_UNCHANGED: ${{ inputs.promote_unchanged }}
+
+jobs:
+  request:
+    name: Check the request
+    runs-on: ubuntu-latest
+    outputs:
+      runtimes: ${{ steps.check.outputs.runtimes }}
+      deadline_at: ${{ steps.check.outputs.deadline_at }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: check
+        env:
+          PATCH_DEADLINE_HOURS: ${{ inputs.deadline_hours }}
+        run: |
+          request=$(./ci.sh patch --check)
+          jq . <<< "$request"
+          echo "runtimes=$(jq -c .runtimes <<< "$request")" >> "$GITHUB_OUTPUT"
+          echo "deadline_at=$(jq -r '.deadline_at // ""' <<< "$request")" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Patch request'
+            echo '```json'
+            jq . <<< "$request"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  bases:
+    name: Mirror the base images
+    needs: request
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # crane reads the login above from the Docker config
+      - name: Install crane (pinned, checksum verified)
+        run: |
+          curl -fsSL -o /tmp/crane.tar.gz "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "${CRANE_SHA256}  /tmp/crane.tar.gz" | sha256sum -c -
+          sudo tar -xzf /tmp/crane.tar.gz -C /usr/local/bin crane
+      - run: ./ci.sh mirror-bases
+
+  build:
+    name: ${{ matrix.runtime }}
+    needs: [request, bases]
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    # one publisher of an image at a time (the publish workflow uses the same groups): two runs
+    # must not count the same patch tag
+    concurrency:
+      group: runtime-image-${{ matrix.runtime }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ${{ fromJSON(needs.request.outputs.runtimes) }}
+    # each runtime's patch results (base64 JSON lines) under its own name: the feed job reads all
+    outputs:
+      python: ${{ steps.results.outputs.python }}
+      nodejs: ${{ steps.results.outputs.nodejs }}
+      go: ${{ steps.results.outputs.go }}
+      php: ${{ steps.results.outputs.php }}
+    steps:
+      # the history: SOURCE_DATE_EPOCH of a build is the time of the last commit of its directory
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          docker image prune --all --force >/dev/null
+          df -h /
+      # arm64 under emulation; binfmt from the reqs mirror, not Docker Hub
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: ghcr.io/brf-tech/runr/reqs/binfmt:latest
+          platforms: arm64
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          name: runr-multiarch
+          driver: docker-container
+          use: false
+          cleanup: false
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: ci.sh patch --push (build, smoke test, publish the changed versions)
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+          BUILDER_NAME: runr-multiarch
+          PATCH_DEADLINE_AT: ${{ needs.request.outputs.deadline_at }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # the whole request (PATCH_*), built for this job's runtime
+        run: ./ci.sh patch --only "$RUNTIME" --push --no-feed --results "${RUNNER_TEMP}/patch-results.jsonl"
+      # also after a failure: the patches pushed before it reach the feed with their results
+      - id: results
+        if: ${{ !cancelled() }}
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+        run: |
+          file="${RUNNER_TEMP}/patch-results.jsonl"
+          if [ -s "$file" ]; then
+            cat "$file"
+            echo "${RUNTIME}=$(base64 -w0 < "$file")" >> "$GITHUB_OUTPUT"
+          fi
+
+  feed:
+    name: Patch feed
+    needs: [request, build]
+    if: ${{ !cancelled() && needs.request.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: patch-feed
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/patch-feed-tools
+      - name: ci.sh feed update --push (sign, publish, retention)
+        env:
+          RESULTS: ${{ toJSON(needs.build.outputs) }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUNR_PATCH_FEED_COSIGN_KEY: ${{ secrets.RUNR_PATCH_FEED_COSIGN_KEY }}
+          RUNR_PATCH_FEED_COSIGN_PASSWORD: ${{ secrets.RUNR_PATCH_FEED_COSIGN_PASSWORD }}
+        run: |
+          args=()
+          while IFS= read -r runtime; do
+            file="${RUNNER_TEMP}/patch-results-${runtime}.jsonl"
+            jq -r --arg runtime "$runtime" '.[$runtime]' <<< "$RESULTS" | base64 -d > "$file"
+            args+=(--results "$file")
+          done < <(jq -r 'to_entries[] | select(.value != "") | .key' <<< "$RESULTS")
+          ./ci.sh feed update --push ${args[@]+"${args[@]}"}

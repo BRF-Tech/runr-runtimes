@@ -1,0 +1,63 @@
+# Adds a RunR platform release that carries a level (a security fix in the API, a zero-day in the
+# console) to the patch feed, so every RunR instance learns that it should upgrade: by hand, after
+# the release is published in BRF-Tech/runr. The feed keeps the newest ten platform releases; a
+# release already in it is replaced (a corrected reason or level). The feed is signed and
+# published like after a patch (ci.sh feed platform --push; one feed writer at a time).
+name: Platform release in the patch feed
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'RunR release (0.5.11)'
+        required: true
+      level:
+        description: 'Level'
+        type: choice
+        options: [security, critical, zero-day, routine]
+        default: security
+      reason_en:
+        description: 'Reason, English (one line)'
+        required: true
+      reason_tr:
+        description: 'Reason, Turkish (one line)'
+        required: true
+      url:
+        description: 'Release notes or advisory (https://…)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  feed:
+    name: Patch feed
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: patch-feed
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/patch-feed-tools
+      - name: ci.sh feed platform --push
+        env:
+          PLATFORM_VERSION: ${{ inputs.version }}
+          PLATFORM_LEVEL: ${{ inputs.level }}
+          PLATFORM_REASON_EN: ${{ inputs.reason_en }}
+          PLATFORM_REASON_TR: ${{ inputs.reason_tr }}
+          PLATFORM_URL: ${{ inputs.url }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUNR_PATCH_FEED_COSIGN_KEY: ${{ secrets.RUNR_PATCH_FEED_COSIGN_KEY }}
+          RUNR_PATCH_FEED_COSIGN_PASSWORD: ${{ secrets.RUNR_PATCH_FEED_COSIGN_PASSWORD }}
+        run: ./ci.sh feed platform --push
