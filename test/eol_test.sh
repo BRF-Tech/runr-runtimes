@@ -14,6 +14,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # shellcheck source=../lib/common.sh
 source "$here/lib/common.sh"
+# shellcheck source=../lib/registry.sh
+source "$here/lib/registry.sh"
 # shellcheck source=../lib/eol.sh
 source "$here/lib/eol.sh"
 
