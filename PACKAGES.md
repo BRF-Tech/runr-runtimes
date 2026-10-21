@@ -71,9 +71,20 @@ after the first push, so every RunR instance can read the feed without credentia
 
 ### The patch feed's signing key
 
-The feed is signed with a cosign key pair that the owner generates once. Until then
-`keys/patch-feed.pub` is a placeholder, and every feed job fails (`… is not a public key`); the
-images are still published, and the first feed update after the key exists lists their patches.
+The feed is signed with a cosign key pair (ECDSA P-256) that the owner generated once, on
+2026-10-22:
+
+| | |
+|-|-|
+| Public key | [`keys/patch-feed.pub`](keys/patch-feed.pub) |
+| SHA-256 of the key (DER) | `24d79a49162ffec0b866ab7274a451a566f7e27fdb6804bffb6d9859d4b1c0df` (`openssl pkey -pubin -in keys/patch-feed.pub -outform DER \| sha256sum`) |
+| Private key, password | the Actions secrets `RUNR_PATCH_FEED_COSIGN_KEY` and `RUNR_PATCH_FEED_COSIGN_PASSWORD`; a copy in the owner's password manager |
+
+A `keys/patch-feed.pub` that is no public key makes every feed job fail (`… is not a public key`);
+the images are still published, and the first feed update after the key exists lists their
+patches.
+
+How the pair was made, and how a new one is made:
 
 1. On a trusted machine with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
    2.x, in an empty directory:
@@ -84,7 +95,8 @@ images are still published, and the first feed update after the key exists lists
 
    It asks for a password twice (use a long random one) and writes `cosign.key` (the private key,
    encrypted with the password) and `cosign.pub` (the public key).
-2. Replace the placeholder with the public key and commit it to `main` (through a pull request):
+2. Replace `keys/patch-feed.pub` with the public key and commit it to `main` (through a pull
+   request):
 
    ```bash
    cp cosign.pub /path/to/runr-runtimes/keys/patch-feed.pub

@@ -324,11 +324,14 @@ grep -q '^oras push' "$tool_calls" && fail "feed_push pushed over a feed it coul
 existing_feed=0
 echo "ok - feed_push: candidate, signed by digest, verified with keys/patch-feed.pub, then tagged feed"
 
-# feed_tools: the placeholder key and a missing signing key refuse a push
-PATCH_FEED_KEY="$here/keys/patch-feed.pub" feed_tools 1 > "$tmp/out" 2>&1 && fail "feed_tools accepted the placeholder key"
+# feed_tools: a file that is no public key (a placeholder) and a missing signing key refuse a push;
+# the committed keys/patch-feed.pub is a public key
+echo '# PLACEHOLDER, NOT A KEY.' > "$tmp/placeholder.pub"
+PATCH_FEED_KEY="$tmp/placeholder.pub" feed_tools 1 > "$tmp/out" 2>&1 && fail "feed_tools accepted the placeholder key"
 grep -q 'not a public key' "$tmp/out" || fail "feed_tools placeholder: $(cat "$tmp/out")"
 RUNR_PATCH_FEED_COSIGN_KEY="" feed_tools 1 > "$tmp/out" 2>&1 && fail "feed_tools without a signing key passed"
 feed_tools 1 > "$tmp/out" 2>&1 || fail "feed_tools: $(cat "$tmp/out")"
+PATCH_FEED_KEY="$here/keys/patch-feed.pub" feed_key_ready || fail "keys/patch-feed.pub is not a public key"
 echo "ok - a feed is published only with the public key and the signing key"
 
 # --- a whole update: the registry's patches, retention -------------------------------------------------
