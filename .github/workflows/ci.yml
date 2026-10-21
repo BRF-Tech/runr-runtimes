@@ -1,8 +1,8 @@
 # Pull requests (and pushes to branches other than main): lint, the shell tests, the Dockerfile
 # and reqs-mirror checks, the wrapper's Go tests, hf-serve's Python tests, the catalog manifests
-# against RunR's runtime schema, and a local build + smoke test (no push) of every CPU image the
-# change touches (ci/images.sh). The GPU images are built by the heavy-images workflow, which
-# runs on any branch by hand.
+# against RunR's runtime schema, the patch feed's schema and example, and a local build + smoke
+# test (no push) of every CPU image the change touches (ci/images.sh). The GPU images are built by
+# the heavy-images workflow, which runs on any branch by hand.
 name: CI
 
 on:
@@ -59,9 +59,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # the patch feed's tests validate feeds against its JSON Schema
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: pip install check-jsonschema==0.38.2
       # ci.sh without Docker or a registry: build/push/smoke flow, smoke tests, the mirror's Docker
-      # Hub fallback, the EOL report, the image selection of the workflows, the catalog manifests
+      # Hub fallback, the EOL report, the image selection of the workflows, the catalog manifests,
+      # patches and the patch feed
       - run: for t in test/*_test.sh; do echo "── $t"; bash "$t"; done
+      # The patch feed's schema is a JSON Schema, the example feed valid against it
+      - run: check-jsonschema --check-metaschema schema/patch-feed.v1.json
+      - run: ./ci.sh feed validate schema/patch-feed.example.json
       # No Docker Hub base image; Spin RUN steps with OTEL_SDK_DISABLED=true (docker-container builders)
       - run: bash ci/check-dockerfiles.sh
       # Every ghcr.io/brf-tech/runr/reqs/* image this repository references is on a mirror list
