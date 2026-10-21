@@ -162,6 +162,9 @@ discovered like the runtime versions (`mirror-bases`).
 
 - When Docker Hub refuses a copy, the image comes from a pull-through mirror of it
   (`REQS_UPSTREAMS`), and only by Docker Hub's digest.
+- An image Docker Hub does not carry is listed with its registry
+  (`quay.io/jetstack/cert-manager-controller:v1.21.2`) and copied from that registry alone, so
+  RunR pulls it from one place.
 - BRF-Tech/runr checks that every reqs image it references resolves anonymously. An image it
   starts to use is added to `REQS_IMAGES` here and mirrored first (`mirror.yml` by hand, with the
   image's name).
