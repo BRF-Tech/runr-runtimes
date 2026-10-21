@@ -9,21 +9,26 @@ WORKDIR /app
 # PYTHONOPTIMIZE); unchecked-hash .pyc are used without looking at the source mtime, so nothing
 # at start can invalidate them. server.py / runner.py run as __main__, which Python never loads
 # from bytecode (0.6 ms to compile at 250m) — no .pyc for them.
-RUN python -m compileall -q -j 0 --invalidation-mode unchecked-hash \
+# The build is reproducible (the same sources and base give the same image: lib/patch.sh): the
+# .pyc carry hashes, not times, and PYTHONHASHSEED=0 orders the sets in their constants the same
+# way in every build.
+RUN PYTHONHASHSEED=0 python -m compileall -q -j 0 --invalidation-mode unchecked-hash \
       "$(python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')"
 
 # OpenTelemetry auto-instrumentation in /app/otel, used only when RunR switches tracing on for a
 # project (RUNR_OTEL_AUTO=1 → entrypoint.sh runs the server under opentelemetry-instrument).
 # Instrumentations activate only for libraries the handler actually has. OTEL=0 builds without it.
+# pip compiles nothing (--no-compile): its .pyc would carry the time of the build, and compileall
+# would keep them; the unchecked-hash ones below are the only ones.
 ARG OTEL=1
 RUN if [ "$OTEL" = "1" ]; then \
-      pip install --no-cache-dir --target=/app/otel \
+      PIP_DISABLE_PIP_VERSION_CHECK=1 pip install --no-cache-dir --no-compile --target=/app/otel \
         opentelemetry-distro opentelemetry-exporter-otlp-proto-http \
         opentelemetry-instrumentation-urllib opentelemetry-instrumentation-urllib3 \
         opentelemetry-instrumentation-requests opentelemetry-instrumentation-httpx \
         opentelemetry-instrumentation-logging opentelemetry-instrumentation-redis \
         opentelemetry-instrumentation-psycopg2 opentelemetry-instrumentation-sqlite3 \
-      && python -m compileall -q -j 0 --invalidation-mode unchecked-hash /app/otel; \
+      && PYTHONHASHSEED=0 python -m compileall -q -j 0 --invalidation-mode unchecked-hash /app/otel; \
     fi
 
 COPY server.py runner.py entrypoint.sh ./
