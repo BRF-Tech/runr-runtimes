@@ -117,8 +117,14 @@ REQS_IMAGES=(
   # ── Test ──
   "kindest-node:v1.32.0|kindest/node:v1.32.0"
 
+  # ── e2e trigger-sources suite: the brokers of the event sources — Kafka, NATS, RabbitMQ, MQTT
+  #    and email (E2eTestTriggerSourcesTrait, runtime/lib/test-trigger-sources.sh) ──
+  "kafka:3.9.1|apache/kafka:3.9.1"
+  "nats:2.11-alpine|nats:2.11-alpine"
+  "rabbitmq:4.1-management-alpine|rabbitmq:4.1-management-alpine"
+  "eclipse-mosquitto:2.0.20|eclipse-mosquitto:2.0.20"
+  "greenmail:2.1.3|greenmail/standalone:2.1.3"
 )
-
 
 _require_crane() {
   if ! command -v crane &>/dev/null; then
