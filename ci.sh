@@ -75,6 +75,8 @@ Environment:
   REQS_UPSTREAMS  Mirror sources in order (default: docker.io mirror.gcr.io public.ecr.aws/docker);
                   a Docker Hub mirror is copied from only by Docker Hub's digest; a REQS_IMAGES
                   source with its registry (quay.io/…) is copied from that registry alone
+  REQS_RETRY_PAUSE
+                  Seconds before the one retry of such a copy refused with DENIED (default: 10)
   GHCR_USERNAME, GHCR_TOKEN
                   Registry reads of private packages; GHCR_TOKEN also deletes package versions
                   (eol --prune, the patch retention of feed update --push)

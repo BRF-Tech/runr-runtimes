@@ -3,7 +3,8 @@
 # Hub (digests by HEAD, copies refused with 429 TOOMANYREQUESTS for the images listed in $limited)
 # and like the pull-through mirrors of REQS_UPSTREAMS (each holds what $tmp/mirrors lists), and
 # records what lands in the target registry. A mirror's copy is taken only by Docker Hub's digest.
-# ghcr.io and quay.io hold what $tmp/others lists: a source with its registry is copied from there.
+# ghcr.io and quay.io hold what $tmp/others lists: a source with its registry is copied from there,
+# and the target refuses the copies $tmp/denied lists with DENIED (GHCR creating a new package).
 #
 #   bash test/mirror_test.sh
 # shellcheck source-path=SCRIPTDIR
@@ -27,7 +28,11 @@ limited="$tmp/limited"    # Docker Hub paths whose copy answers 429
 mirrors="$tmp/mirrors"    # <mirror>/<repository>@<digest> a mirror holds
 registry="$tmp/registry"  # <target ref> <digest> of every copy
 others="$tmp/others"      # <ghcr.io / quay.io reference> <digest> those registries hold
+denied="$tmp/denied"      # <target ref> <n>: the target refuses the next n copies to it (DENIED)
 hub_down=0
+
+# the pause before a retry: recorded, not waited for
+sleep() { echo "sleep $*" >> "$log"; }
 
 cat > "$hub" <<'EOF'
 library/alpine:3.21 sha256:a1
@@ -68,6 +73,12 @@ crane() {
             echo "Error: fetching \"${ref}\": GET https://${ref%%/*}/v2/${ref#*/}: MANIFEST_UNKNOWN: manifest unknown; unknown tag=${ref##*:}" >&2
             return 1
           fi
+          # GHCR creating a new package: crane's form of a refused upload to the target
+          if awk -v t="$3" '$1 == t && $2 > 0 { found = 1 } END { exit !found }' "$denied"; then
+            awk -v t="$3" '$1 == t { $2 = $2 - 1 } { print }' "$denied" > "$denied.new" && mv "$denied.new" "$denied"
+            echo "Error: PUT https://${3%%/*}/v2/${3#*/}/blobs/uploads/: DENIED: requested access to the resource is denied" >&2
+            return 1
+          fi
           echo "$3 ${digest}" >> "$registry" ;;
         *@sha256:*)
           if ! grep -qxF "$ref" "$mirrors"; then
@@ -100,6 +111,7 @@ reset() {
   tr ' ' '\n' <<< "$2" > "$mirrors"
   printf '%s\n' "ghcr.io/external-secrets/external-secrets:v0.19.2 sha256:f1" \
     "quay.io/jetstack/cert-manager-webhook:v1.21.2 sha256:f2" > "$others"
+  : > "$denied"
   hub_down=0
 }
 
@@ -190,6 +202,29 @@ cmd_mirror_reqs cert-manager-webhook > "$tmp/out" 2>&1 || status=$?
 grep -qF 'quay.io: MANIFEST_UNKNOWN: manifest unknown' "$tmp/out" || fail "quay.io's answer is not reported: $(cat "$tmp/out")"
 [ -z "$(copied cert-manager-webhook:v1.21.2)" ] || fail "cert-manager-webhook copied although quay.io lacks it"
 echo "ok - a source with its registry: copied from that registry only, its refusal reported"
+
+# --- a direct copy refused with DENIED (a new package's first push): once more after the pause ---
+copy_es="crane copy ghcr.io/external-secrets/external-secrets:v0.19.2 registry.test/brf-tech/reqs/external-secrets:v0.19.2"
+reset "" ""
+echo "registry.test/brf-tech/reqs/external-secrets:v0.19.2 1" > "$denied"
+cmd_mirror_reqs external-secrets > "$tmp/out" 2>&1 || { cat "$tmp/out"; fail "mirror-reqs failed although the second copy is accepted"; }
+[ "$(cat "$log")" = "$(printf '%s\n' "$copy_es" "sleep 10" "$copy_es")" ] \
+  || fail "the copy refused with DENIED was not tried once more after the default pause: $(cat "$log")"
+[ "$(copied external-secrets:v0.19.2)" = "sha256:f1" ] || fail "external-secrets not copied by the second copy"
+grep -qF 'on the second copy, the first: DENIED: requested access to the resource is denied;' "$tmp/out" \
+  || fail "the retry is not reported: $(cat "$tmp/out")"
+# refused again: one retry only, then the failure with both answers
+reset "" ""
+echo "registry.test/brf-tech/reqs/external-secrets:v0.19.2 5" > "$denied"
+status=0
+REQS_RETRY_PAUSE=3 cmd_mirror_reqs external-secrets > "$tmp/out" 2>&1 || status=$?
+[ "$status" = "1" ] || { cat "$tmp/out"; fail "mirror-reqs did not fail when the target refuses every copy"; }
+[ "$(cat "$log")" = "$(printf '%s\n' "$copy_es" "sleep 3" "$copy_es")" ] \
+  || fail "not exactly one retry after REQS_RETRY_PAUSE: $(cat "$log")"
+grep -qF 'ghcr.io: DENIED: requested access to the resource is denied; again after 3s: DENIED: requested access to the resource is denied;' "$tmp/out" \
+  || fail "the two refusals are not reported: $(cat "$tmp/out")"
+[ -z "$(copied external-secrets:v0.19.2)" ] || fail "external-secrets copied although every copy was refused"
+echo "ok - a direct copy refused with DENIED: one retry after REQS_RETRY_PAUSE, other errors none"
 
 # --- registry_qualified; the Docker Hub helpers skip a source with its registry --------------------
 for ref in ghcr.io/external-secrets/external-secrets:v0.19.2 quay.io/jetstack/cert-manager-controller:v1.21.2 \
