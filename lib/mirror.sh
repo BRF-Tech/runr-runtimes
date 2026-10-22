@@ -18,6 +18,11 @@
 #   REQS_UPSTREAMS="mirror.gcr.io public.ecr.aws/docker" ci.sh mirror-reqs   no Docker Hub pulls
 REQS_UPSTREAMS="${REQS_UPSTREAMS:-docker.io mirror.gcr.io public.ecr.aws/docker}"
 
+# A direct copy (a source with its registry) that fails with DENIED is tried once more after this
+# many seconds: GHCR can refuse some of crane's parallel uploads to a package that the first push
+# is still creating
+REQS_RETRY_PAUSE="${REQS_RETRY_PAUSE:-10}"
+
 # target|source — target = $REGISTRY/reqs/{target}, source = a Docker Hub repository with its tag
 # (library/ implied for official images), or tag@digest for an image pinned by digest, or a
 # reference with its registry (ghcr.io/org/name:tag, quay.io/org/name:tag) for an image Docker Hub
@@ -111,7 +116,9 @@ REQS_IMAGES=(
 
   # ── Test ──
   "kindest-node:v1.32.0|kindest/node:v1.32.0"
+
 )
+
 
 _require_crane() {
   if ! command -v crane &>/dev/null; then
@@ -123,7 +130,8 @@ _require_crane() {
 
 # _crane_copy SOURCE TARGET DRY_RUN — SOURCE (a REQS_IMAGES source) from the first upstream of
 # REQS_UPSTREAMS that has it; from a mirror only by Docker Hub's digest. A source with its registry
-# (registry_qualified) from that registry only.
+# (registry_qualified) from that registry only, once more after REQS_RETRY_PAUSE when the copy is
+# refused with DENIED (the first push to a new package).
 _crane_copy() {
   local source="$1" target="$2" dry_run="$3" path upstream want="" err note=""
   if registry_qualified "$source"; then
@@ -136,7 +144,16 @@ _crane_copy() {
       echo -e "${GREEN}ok${NC}"
       return 0
     fi
-    echo -e "${RED}fail${NC} ${source%%/*}: $(_crane_error "$err");"
+    note=" $(_crane_error "$err");"
+    if [[ "$note" == " DENIED:"* ]]; then
+      sleep "$REQS_RETRY_PAUSE"
+      if err=$(crane copy "$source" "$target" 2>&1); then
+        echo -e "${GREEN}ok${NC} on the second copy, the first:${note}"
+        return 0
+      fi
+      note="${note} again after ${REQS_RETRY_PAUSE}s: $(_crane_error "$err");"
+    fi
+    echo -e "${RED}fail${NC} ${source%%/*}:${note}"
     return 1
   fi
 
