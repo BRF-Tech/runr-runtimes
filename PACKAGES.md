@@ -12,9 +12,11 @@ The settings page of a package is
 `https://github.com/orgs/BRF-Tech/packages/container/<package, "/" written as %2F>/settings`, for
 example <https://github.com/orgs/BRF-Tech/packages/container/runr%2Fexec-python/settings>.
 
-A package that a workflow of this repository creates gets its access from the repository
-(`org.opencontainers.image.source`). It starts out private: set its visibility to public in its
-settings once, after the first push.
+A package that a workflow of this repository creates is linked to this repository (the workflow's
+`GITHUB_TOKEN`; the images built here also name it in `org.opencontainers.image.source`). It gets
+its access and its visibility from the repository, so it is public from the first push, like this
+repository: nothing to set. Check once that it pulls without credentials; if its settings ever
+show it private, set it to public there.
 
 ## Images (publish, patch and heavy-images workflows)
 
@@ -65,9 +67,9 @@ old patch tags stay until the next feed update deletes them.
 | `runr/runtime-patches` | `feed` (the signed feed RunR instances read), `feed-candidate` (the last pushed), `sha256-<digest>.sig` (cosign signatures) | the feed jobs of publish and patch; platform-release |
 
 The first feed update creates the package; the `org.opencontainers.image.source` annotation of the
-feed links it to this repository. It starts out private: **set its visibility to public** once,
-after the first push, so every RunR instance can read the feed without credentials
-(<https://github.com/orgs/BRF-Tech/packages/container/runr%2Fruntime-patches/settings>).
+feed links it to this repository, and it is public like the repository, so every RunR instance
+can read the feed without credentials. If its settings ever show it private, **set its visibility
+to public** there (<https://github.com/orgs/BRF-Tech/packages/container/runr%2Fruntime-patches/settings>).
 
 ### The patch feed's signing key
 
@@ -148,7 +150,9 @@ Every image of `REQS_IMAGES` in `lib/mirror.sh`, and the base images of the lang
 | `runr/reqs/docker` | `runr/reqs/opentelemetry-collector-contrib` | |
 
 When you add an image to `REQS_IMAGES` whose package does not exist yet, the mirror workflow
-creates the package. Set its visibility to public afterwards.
+creates the package, linked to this repository and public like it (the source image's own
+`org.opencontainers.image.source` does not change that). Check that the new tag pulls without
+credentials.
 
 ## Not published here
 
