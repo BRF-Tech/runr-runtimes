@@ -3,8 +3,9 @@
 # Hub (digests by HEAD, copies refused with 429 TOOMANYREQUESTS for the images listed in $limited)
 # and like the pull-through mirrors of REQS_UPSTREAMS (each holds what $tmp/mirrors lists), and
 # records what lands in the target registry. A mirror's copy is taken only by Docker Hub's digest.
-# ghcr.io and quay.io hold what $tmp/others lists: a source with its registry is copied from there,
-# and the target refuses the copies $tmp/denied lists with DENIED (GHCR creating a new package).
+# ghcr.io and quay.io hold what $tmp/others lists: a source with its registry is copied from there.
+# The target refuses the copies $tmp/denied counts with DENIED, from any of them (GHCR creating a
+# new package).
 #
 #   bash test/mirror_test.sh
 # shellcheck source-path=SCRIPTDIR
@@ -33,6 +34,14 @@ hub_down=0
 
 # the pause before a retry: recorded, not waited for
 sleep() { echo "sleep $*" >> "$log"; }
+
+# refused TARGET — while $denied counts copies to TARGET to refuse: one less, and crane's form of an
+# upload the target refused (GHCR creating a new package)
+refused() {
+  awk -v t="$1" '$1 == t && $2 > 0 { found = 1 } END { exit !found }' "$denied" || return 1
+  awk -v t="$1" '$1 == t { $2 = $2 - 1 } { print }' "$denied" > "$denied.new" && mv "$denied.new" "$denied"
+  echo "Error: PUT https://${1%%/*}/v2/${1#*/}/blobs/uploads/: DENIED: requested access to the resource is denied" >&2
+}
 
 cat > "$hub" <<'EOF'
 library/alpine:3.21 sha256:a1
@@ -64,6 +73,7 @@ crane() {
             echo "Error: GET https://index.docker.io/v2/${path%%:*}/manifests/${path#*:}: TOOMANYREQUESTS: You have reached your unauthenticated pull rate limit." >&2
             return 1
           fi
+          refused "$3" && return 1
           digest=$(awk -v p="${path%@*}" '$1 == p { print $2 }' "$hub")
           [ -n "$digest" ] || digest="${path##*@}"
           echo "$3 ${digest}" >> "$registry" ;;
@@ -73,12 +83,7 @@ crane() {
             echo "Error: fetching \"${ref}\": GET https://${ref%%/*}/v2/${ref#*/}: MANIFEST_UNKNOWN: manifest unknown; unknown tag=${ref##*:}" >&2
             return 1
           fi
-          # GHCR creating a new package: crane's form of a refused upload to the target
-          if awk -v t="$3" '$1 == t && $2 > 0 { found = 1 } END { exit !found }' "$denied"; then
-            awk -v t="$3" '$1 == t { $2 = $2 - 1 } { print }' "$denied" > "$denied.new" && mv "$denied.new" "$denied"
-            echo "Error: PUT https://${3%%/*}/v2/${3#*/}/blobs/uploads/: DENIED: requested access to the resource is denied" >&2
-            return 1
-          fi
+          refused "$3" && return 1
           echo "$3 ${digest}" >> "$registry" ;;
         *@sha256:*)
           if ! grep -qxF "$ref" "$mirrors"; then
@@ -86,6 +91,7 @@ crane() {
             echo "Error: fetching \"${ref}\": GET https://${ref%%/*}/v2/${ref#*/}/manifests/${ref##*@}: MANIFEST_UNKNOWN: manifest unknown; unknown tag=${ref##*@}" >&2
             return 1
           fi
+          refused "$3" && return 1
           echo "$3 ${ref##*@}" >> "$registry" ;;
         *) echo "Error: copied by tag from a mirror: $ref" >&2; return 1 ;;
       esac ;;
@@ -144,6 +150,7 @@ grep -qxF 'crane copy mirror.gcr.io/library/alpine@sha256:a1 registry.test/brf-t
 grep -qF 'crane digest docker.io/library/rust' "$log" && fail "the digest of a pinned image was read from Docker Hub"
 grep -qF 'TOOMANYREQUESTS' "$tmp/out" || fail "Docker Hub's refusal is not reported"
 grep -qF "from mirror.gcr.io, Docker Hub's digest sha256:a1" "$tmp/out" || fail "the mirror copy is not reported"
+grep -q '^sleep' "$log" && fail "a pause although no copy was refused with DENIED: $(cat "$log")"
 echo "ok - Docker Hub's pull limit: the images from mirror.gcr.io / public.ecr.aws by Docker Hub's digest"
 
 # --- a mirror with another image under the tag: never copied ------------------------------------
@@ -225,6 +232,27 @@ grep -qF 'ghcr.io: DENIED: requested access to the resource is denied; again aft
   || fail "the two refusals are not reported: $(cat "$tmp/out")"
 [ -z "$(copied external-secrets:v0.19.2)" ] || fail "external-secrets copied although every copy was refused"
 echo "ok - a direct copy refused with DENIED: one retry after REQS_RETRY_PAUSE, other errors none"
+
+# --- a Docker Hub source refused with DENIED: Docker Hub once more, then a mirror (also once more) --
+copy_hub="crane copy docker.io/library/alpine:3.21 registry.test/brf-tech/reqs/alpine:3.21"
+copy_mirror="crane copy mirror.gcr.io/library/alpine@sha256:a1 registry.test/brf-tech/reqs/alpine:3.21"
+reset "" "mirror.gcr.io/library/alpine@sha256:a1"
+echo "registry.test/brf-tech/reqs/alpine:3.21 1" > "$denied"
+cmd_mirror_reqs alpine:3.21 > "$tmp/out" 2>&1 || { cat "$tmp/out"; fail "mirror-reqs failed although Docker Hub's second copy is accepted"; }
+[ "$(cat "$log")" = "$(printf '%s
+' "$copy_hub" "sleep 10" "$copy_hub")" ]   || fail "the Docker Hub copy refused with DENIED was not made once more, before any mirror: $(cat "$log")"
+[ "$(copied alpine:3.21)" = "sha256:a1" ] || fail "alpine:3.21 not copied by Docker Hub's second copy"
+grep -qF 'on the second copy, the first: DENIED: requested access to the resource is denied;' "$tmp/out"   || fail "the second Docker Hub copy is not reported: $(cat "$tmp/out")"
+# refused on both Docker Hub copies and the first mirror copy: the mirror's second copy
+reset "" "mirror.gcr.io/library/alpine@sha256:a1"
+echo "registry.test/brf-tech/reqs/alpine:3.21 3" > "$denied"
+cmd_mirror_reqs alpine:3.21 > "$tmp/out" 2>&1 || { cat "$tmp/out"; fail "mirror-reqs failed although the mirror's second copy is accepted"; }
+[ "$(cat "$log")" = "$(printf '%s
+' "$copy_hub" "sleep 10" "$copy_hub" "crane digest docker.io/library/alpine:3.21"   "$copy_mirror" "sleep 10" "$copy_mirror" "crane digest registry.test/brf-tech/reqs/alpine:3.21")" ]   || fail "not Docker Hub twice, then the mirror twice by Docker Hub's digest: $(cat "$log")"
+[ "$(copied alpine:3.21)" = "sha256:a1" ] || fail "alpine:3.21 not copied by the mirror's second copy"
+grep -qF 'docker.io: DENIED: requested access to the resource is denied; again after 10s: DENIED: requested access to the resource is denied;' "$tmp/out"   || fail "Docker Hub's two refusals are not reported: $(cat "$tmp/out")"
+grep -qF "from mirror.gcr.io, Docker Hub's digest sha256:a1 on the second copy, the first: DENIED" "$tmp/out"   || fail "the mirror's second copy is not reported: $(cat "$tmp/out")"
+echo "ok - a Docker Hub source refused with DENIED: Docker Hub once more after REQS_RETRY_PAUSE, then a mirror"
 
 # --- registry_qualified; the Docker Hub helpers skip a source with its registry --------------------
 for ref in ghcr.io/external-secrets/external-secrets:v0.19.2 quay.io/jetstack/cert-manager-controller:v1.21.2 \

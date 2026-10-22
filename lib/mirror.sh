@@ -6,7 +6,8 @@
 # Requires: crane (go-containerregistry)
 #
 # A source that names its registry (ghcr.io/…, quay.io/…: registry_qualified of lib/common.sh) is
-# copied from that registry directly — no Docker Hub, no mirror of it.
+# copied from that registry directly — no Docker Hub, no mirror of it. Any copy refused with DENIED
+# is made once more after REQS_RETRY_PAUSE (_crane_copy_retry), before the next upstream.
 #
 # Upstreams of a Docker Hub source (REQS_UPSTREAMS, tried in order): Docker Hub, then pull-through
 # mirrors of it that serve its repositories under their own prefix — mirror.gcr.io/library/alpine,
@@ -18,9 +19,9 @@
 #   REQS_UPSTREAMS="mirror.gcr.io public.ecr.aws/docker" ci.sh mirror-reqs   no Docker Hub pulls
 REQS_UPSTREAMS="${REQS_UPSTREAMS:-docker.io mirror.gcr.io public.ecr.aws/docker}"
 
-# A direct copy (a source with its registry) that fails with DENIED is tried once more after this
-# many seconds: GHCR can refuse some of crane's parallel uploads to a package that the first push
-# is still creating
+# A copy that fails with DENIED — from Docker Hub, a mirror of it or a source's own registry — is
+# made once more after this many seconds: GHCR can refuse some of crane's parallel uploads to a
+# package that the first push is still creating
 REQS_RETRY_PAUSE="${REQS_RETRY_PAUSE:-10}"
 
 # target|source — target = $REGISTRY/reqs/{target}, source = a Docker Hub repository with its tag
@@ -136,30 +137,21 @@ _require_crane() {
 
 # _crane_copy SOURCE TARGET DRY_RUN — SOURCE (a REQS_IMAGES source) from the first upstream of
 # REQS_UPSTREAMS that has it; from a mirror only by Docker Hub's digest. A source with its registry
-# (registry_qualified) from that registry only, once more after REQS_RETRY_PAUSE when the copy is
-# refused with DENIED (the first push to a new package).
+# (registry_qualified) from that registry only. Every copy is made once more when it is refused
+# with DENIED (_crane_copy_retry: the first push to a new package).
 _crane_copy() {
-  local source="$1" target="$2" dry_run="$3" path upstream want="" err note=""
+  local source="$1" target="$2" dry_run="$3" path upstream want="" out note=""
   if registry_qualified "$source"; then
     if [ "$dry_run" = "1" ]; then
       echo "  [dry-run] ${source} → ${target}"
       return 0
     fi
     echo -n "  ${source} → ${target} ... "
-    if err=$(crane copy "$source" "$target" 2>&1); then
-      echo -e "${GREEN}ok${NC}"
+    if out=$(_crane_copy_retry "$source" "$target"); then
+      echo -e "${GREEN}ok${NC}${out:+ on the second copy, the first:${out}}"
       return 0
     fi
-    note=" $(_crane_error "$err");"
-    if [[ "$note" == " DENIED:"* ]]; then
-      sleep "$REQS_RETRY_PAUSE"
-      if err=$(crane copy "$source" "$target" 2>&1); then
-        echo -e "${GREEN}ok${NC} on the second copy, the first:${note}"
-        return 0
-      fi
-      note="${note} again after ${REQS_RETRY_PAUSE}s: $(_crane_error "$err");"
-    fi
-    echo -e "${RED}fail${NC} ${source%%/*}:${note}"
+    echo -e "${RED}fail${NC} ${source%%/*}:${out}"
     return 1
   fi
 
@@ -172,11 +164,11 @@ _crane_copy() {
 
   for upstream in $REQS_UPSTREAMS; do
     if [ "$upstream" = "docker.io" ]; then
-      if err=$(crane copy "docker.io/${path}" "${target}" 2>&1); then
-        echo -e "${GREEN}ok${NC}${note}"
+      if out=$(_crane_copy_retry "docker.io/${path}" "${target}"); then
+        echo -e "${GREEN}ok${NC}${note}${out:+ on the second copy, the first:${out}}"
         return 0
       fi
-      note="${note} docker.io: $(_crane_error "$err");"
+      note="${note} docker.io:${out}"
       continue
     fi
 
@@ -184,15 +176,41 @@ _crane_copy() {
       echo -e "${RED}fail${NC}${note} no Docker Hub digest to check ${upstream} against"
       return 1
     fi
-    if err=$(crane copy "${upstream}/${path%%[:@]*}@${want}" "${target}" 2>&1) \
-      && [ "$(crane digest "${target}" 2>/dev/null)" = "$want" ]; then
-      echo -e "${GREEN}ok${NC}${note} from ${upstream}, Docker Hub's digest ${want}"
-      return 0
+    if out=$(_crane_copy_retry "${upstream}/${path%%[:@]*}@${want}" "${target}"); then
+      if [ "$(crane digest "${target}" 2>/dev/null)" = "$want" ]; then
+        echo -e "${GREEN}ok${NC}${note} from ${upstream}, Docker Hub's digest ${want}${out:+ on the second copy, the first:${out}}"
+        return 0
+      fi
+      out=" ${target} is not at ${want} after the copy;"
     fi
-    note="${note} ${upstream}: $(_crane_error "$err");"
+    note="${note} ${upstream}:${out}"
   done
 
   echo -e "${RED}fail${NC}${note}"
+  return 1
+}
+
+# _crane_copy_retry SOURCE TARGET — crane copy SOURCE TARGET; when it is refused with DENIED, once
+# more after REQS_RETRY_PAUSE seconds (GHCR can refuse part of the first push to a package it is
+# still creating). Prints the answers for the report: nothing when the first copy worked,
+# " <first answer>;" when the second did; " <answer>;" or " <first>; again after <n>s: <second>;"
+# with status 1 when no copy worked.
+_crane_copy_retry() {
+  local err first
+  if err=$(crane copy "$1" "$2" 2>&1); then
+    return 0
+  fi
+  first="$(_crane_error "$err")"
+  if [[ "$first" != DENIED:* ]]; then
+    echo " ${first};"
+    return 1
+  fi
+  sleep "$REQS_RETRY_PAUSE"
+  if err=$(crane copy "$1" "$2" 2>&1); then
+    echo " ${first};"
+    return 0
+  fi
+  echo " ${first}; again after ${REQS_RETRY_PAUSE}s: $(_crane_error "$err");"
   return 1
 }
 

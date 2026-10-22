@@ -324,8 +324,10 @@ discovered like the runtime versions (`mirror-bases`).
   (`REQS_UPSTREAMS`), and only by Docker Hub's digest.
 - An image Docker Hub does not carry is listed with its registry
   (`quay.io/jetstack/cert-manager-controller:v1.21.2`) and copied from that registry alone, so
-  RunR pulls it from one place. A copy refused with DENIED is tried once more after a pause
-  (`REQS_RETRY_PAUSE`): GHCR can refuse part of the first push to a package it is still creating.
+  RunR pulls it from one place.
+- Every copy refused with DENIED (from Docker Hub, a mirror of it or a source's own registry) is
+  made once more after a pause (`REQS_RETRY_PAUSE`), before the next upstream: GHCR can refuse
+  part of the first push to a package it is still creating, so a new image needs no second run.
 - BRF-Tech/runr checks that every reqs image it references resolves anonymously. An image it
   starts to use is added to `REQS_IMAGES` here and mirrored first (`mirror.yml` by hand, with the
   image's name).
