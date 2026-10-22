@@ -136,18 +136,20 @@ Every image of `REQS_IMAGES` in `lib/mirror.sh`, and the base images of the lang
 
 | Package | Package | Package |
 |---------|---------|---------|
-| `runr/reqs/alpine` | `runr/reqs/external-secrets` | `runr/reqs/pdns-auth` |
-| `runr/reqs/bash` | `runr/reqs/frankenphp` | `runr/reqs/php` |
-| `runr/reqs/binfmt` | `runr/reqs/garage` | `runr/reqs/postgres` |
-| `runr/reqs/busybox` | `runr/reqs/golang` | `runr/reqs/python` |
+| `runr/reqs/alpine` | `runr/reqs/frankenphp` | `runr/reqs/pdns-auth` |
+| `runr/reqs/bash` | `runr/reqs/garage` | `runr/reqs/php` |
+| `runr/reqs/binfmt` | `runr/reqs/golang` | `runr/reqs/postgres` |
+| `runr/reqs/busybox` | `runr/reqs/greenmail` | `runr/reqs/python` |
 | `runr/reqs/caddy` | `runr/reqs/helm` | `runr/reqs/pytorch` |
-| `runr/reqs/cert-manager-acmesolver` | `runr/reqs/k6` | `runr/reqs/rclone` |
-| `runr/reqs/cert-manager-cainjector` | `runr/reqs/kindest-node` | `runr/reqs/redis` |
-| `runr/reqs/cert-manager-controller` | `runr/reqs/mailpit` | `runr/reqs/rust` |
-| `runr/reqs/cert-manager-webhook` | `runr/reqs/nginx` | `runr/reqs/tempo` |
-| `runr/reqs/composer` | `runr/reqs/node` | `runr/reqs/tinygo` |
-| `runr/reqs/curl` | `runr/reqs/openbao` | `runr/reqs/traefik` |
-| `runr/reqs/docker` | `runr/reqs/opentelemetry-collector-contrib` | |
+| `runr/reqs/cert-manager-acmesolver` | `runr/reqs/k6` | `runr/reqs/rabbitmq` |
+| `runr/reqs/cert-manager-cainjector` | `runr/reqs/kafka` | `runr/reqs/rclone` |
+| `runr/reqs/cert-manager-controller` | `runr/reqs/kindest-node` | `runr/reqs/redis` |
+| `runr/reqs/cert-manager-webhook` | `runr/reqs/mailpit` | `runr/reqs/rust` |
+| `runr/reqs/composer` | `runr/reqs/nats` | `runr/reqs/tempo` |
+| `runr/reqs/curl` | `runr/reqs/nginx` | `runr/reqs/tinygo` |
+| `runr/reqs/docker` | `runr/reqs/node` | `runr/reqs/traefik` |
+| `runr/reqs/eclipse-mosquitto` | `runr/reqs/openbao` | |
+| `runr/reqs/external-secrets` | `runr/reqs/opentelemetry-collector-contrib` | |
 
 When you add an image to `REQS_IMAGES` whose package does not exist yet, the mirror workflow
 creates the package, linked to this repository and public like it (the source image's own
