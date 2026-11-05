@@ -45,7 +45,9 @@ REQS_IMAGES=(
   "busybox:latest|busybox:latest"
   "nginx:1.27-alpine|nginx:1.27-alpine"
 
-  # ── Region ingress: the image of the pinned Traefik chart (KnativeConstants::TRAEFIK_IMAGE) ──
+  # ── Region ingress: the image of the pinned Traefik chart (KnativeConstants::TRAEFIK_IMAGE), and
+  #    the one before it, which regions run until region:reconcile moves them ──
+  "traefik:v3.7.17|traefik:v3.7.17"
   "traefik:v3.7.4|traefik:v3.7.4"
 
   # ── Region tracing backend: the images of the pinned collector and Tempo charts
