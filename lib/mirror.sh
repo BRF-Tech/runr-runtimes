@@ -117,8 +117,11 @@ REQS_IMAGES=(
   "cert-manager-cainjector:v1.21.2|quay.io/jetstack/cert-manager-cainjector:v1.21.2"
   "cert-manager-acmesolver:v1.21.2|quay.io/jetstack/cert-manager-acmesolver:v1.21.2"
 
-  # ── Test ──
+  # ── Test: the Kind node images of the e2e runs, by the digest of the Kind release that built them
+  #    (v0.31.0, the pin of BRF-Tech/runr's e2e.yml): Kubernetes 1.34 runs Knative 1.23, 1.35 Knative 1.24 ──
   "kindest-node:v1.32.0|kindest/node:v1.32.0"
+  "kindest-node:v1.34.3|kindest/node:v1.34.3@sha256:08497ee19eace7b4b5348db5c6a1591d7752b164530a36f855cb0f2bdcbadd48"
+  "kindest-node:v1.35.0|kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f"
 
   # ── e2e trigger-sources suite: the brokers of the event sources — Kafka, NATS, RabbitMQ, MQTT
   #    and email (E2eTestTriggerSourcesTrait, runtime/lib/test-trigger-sources.sh) ──
