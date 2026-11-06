@@ -16,6 +16,7 @@ source "${SCRIPT_DIR}/lib/eol.sh"
 source "${SCRIPT_DIR}/lib/patch.sh"
 source "${SCRIPT_DIR}/lib/feed.sh"
 source "${SCRIPT_DIR}/lib/catalog.sh"
+source "${SCRIPT_DIR}/lib/watch.sh"
 
 # ── Help ──
 cmd_help() {
@@ -27,10 +28,11 @@ runtimes: lib/build-ml.sh); --push pushes them once all passed. --no-smoke skips
 a local build and is refused with --push. Every build pulls its base images (--pull).
 
 Commands:
-  build [--push] [--no-smoke] [python|nodejs|go|php...]
+  build [--push] [--no-smoke] [--version=X.Y] [python|nodejs|go|php...]
                                       Language runtimes: discover the upstream versions, skip EOL
                                       ones, build exec-<runtime>:<major.minor>; --push publishes each
-                                      changed one as a routine patch (multi-arch, + <full>-r<n>)
+                                      changed one as a routine patch (multi-arch, + <full>-r<n>);
+                                      --version=X.Y: one version of one runtime
   patch [--push] [--check] [--no-feed] [--results FILE] [--only RUNTIME] [--versions all|LIST]
         --level LEVEL [--reason-en TEXT --reason-tr TEXT] [--cves LIST] [--url URL]
         [--deadline-hours N | --deadline-at TIME] [--promote-unchanged] RUNTIME...|all
@@ -71,6 +73,9 @@ Commands:
   mirror-reqs [--dry-run] [image...]  Multi-arch mirror of the upstream reqs images (all, or the ones named)
   mirror-bases [--dry-run]            Multi-arch mirror of the language runtimes' base images
   eol [--prune] [--yes]               EOL check of the GHCR exec-* images + optional cleanup
+  watch [--report=DIR]                The upstream releases the images do not follow yet: language
+                                      versions and patch releases, end of life, the ML frameworks,
+                                      the WebAssembly toolchains (lib/watch.sh; the language bot)
   help                                Show this message
 
 Environment:
@@ -140,6 +145,7 @@ case "$command" in
   mirror-reqs)     cmd_mirror_reqs "$@" ;;
   mirror-bases)    cmd_mirror_bases "$@" ;;
   eol)             cmd_eol "$@" ;;
+  watch)           cmd_watch "$@" ;;
   help)            cmd_help ;;
   *)               echo "Unknown command: $command"; cmd_help; exit 1 ;;
 esac

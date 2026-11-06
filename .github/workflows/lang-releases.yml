@@ -1,0 +1,57 @@
+# The upstream releases the images follow (README.md, The language bot), every week and by hand:
+# `ci.sh watch` reports new versions and patch releases of the language runtimes, versions near or
+# past their end of life, new releases of the ML frameworks and of the WebAssembly toolchains.
+# Each finding becomes an issue of this repository once: a title an issue already has, open or
+# closed, is not filed again. Language tests (lang-test.yml) runs when this workflow ends.
+name: Language releases
+
+on:
+  schedule:
+    # Mondays 00:47 UTC, before the reqs mirror (02:17) and the weekly publish (03:17)
+    - cron: '47 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lang-releases
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Upstream releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ci.sh watch
+        env:
+          # GitHub's releases API, above the anonymous rate limit
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./ci.sh watch --report="$RUNNER_TEMP/releases"
+      # one issue per finding whose title no issue (open or closed) has yet
+      - name: File the findings as issues
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/releases/*.md; do
+            title="$(head -n 1 "$f")"
+            tail -n +3 "$f" > "$f.body"
+            known="$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 200 \
+              --search "\"${title}\" in:title" --json title --jq '.[].title')"
+            if grep -qxF -- "$title" <<<"$known"; then
+              echo "already filed: ${title}"
+              continue
+            fi
+            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$f.body")"
+            echo "filed: ${title} ${url}"
+            echo "- [${title}](${url})" >> "$GITHUB_STEP_SUMMARY"
+          done
