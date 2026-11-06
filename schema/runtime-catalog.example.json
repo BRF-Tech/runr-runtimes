@@ -1,0 +1,132 @@
+{
+  "schema": 1,
+  "generated_at": "2026-11-07T12:00:00Z",
+  "source": {
+    "repository": "https://github.com/acme/runr-runtimes",
+    "revision": "9f2c4e1a7b3d5f60817263a4b5c6d7e8f9012345"
+  },
+  "runtimes": [
+    {
+      "path": "runtimes/lua/runtime.yaml",
+      "manifest": {
+        "apiVersion": "runr.sh/v1",
+        "kind": "Runtime",
+        "id": "lua",
+        "name": "Lua",
+        "description": "Lua 5.4; one long-lived interpreter process answers every request.",
+        "language": "lua",
+        "extensions": [
+          "lua"
+        ],
+        "category": "general",
+        "versions": [
+          {
+            "version": "5.4",
+            "image": "ghcr.io/acme/runr-runtimes/lua:5.4",
+            "default": true
+          }
+        ],
+        "handler": {
+          "file": "main",
+          "function": "handler",
+          "pattern": "function\\s+(\\w+[.:])?{handler}\\s*\\("
+        },
+        "template": {
+          "files": {
+            "{file}": "local M = {}\n\nfunction M.{handler}(event, context)\n  local name = (event.query or {}).name or \"World\"\n  return { statusCode = 200, body = \"Hello, \" .. name .. \"! (from Lua)\" }\nend\n\nreturn M\n"
+          }
+        },
+        "run": {
+          "mode": "persistent",
+          "command": [
+            "lua5.4",
+            "/usr/local/share/runr/runr.lua"
+          ],
+          "workers": 2
+        },
+        "triggers": [
+          "http",
+          "schedule",
+          "queue"
+        ],
+        "sandbox": [
+          "runc",
+          "gvisor",
+          "kata"
+        ],
+        "resources": {
+          "cpu": "250m",
+          "memory_mb": 128
+        }
+      }
+    },
+    {
+      "path": "runtimes/q/runtime.yaml",
+      "manifest": {
+        "apiVersion": "runr.sh/v1",
+        "kind": "Runtime",
+        "id": "q",
+        "name": "Q",
+        "description": "Q, a tiny line-based language; one long-lived interpreter process answers every request.",
+        "language": "plaintext",
+        "extensions": [
+          "q"
+        ],
+        "category": "general",
+        "versions": [
+          {
+            "version": "1.0",
+            "dockerfile": "Dockerfile",
+            "default": true
+          }
+        ],
+        "handler": {
+          "file": "main"
+        },
+        "template": {
+          "files": {
+            "{file}": "print \"Hello, {query.name}! (from Q)\"\n"
+          }
+        },
+        "run": {
+          "mode": "persistent",
+          "command": [
+            "q",
+            "/app/code/{file}"
+          ]
+        },
+        "triggers": [
+          "http",
+          "schedule",
+          "queue"
+        ]
+      },
+      "files": {
+        "Dockerfile": "FROM golang:1.26-alpine AS build\nWORKDIR /src\nCOPY go.mod main.go ./\nRUN CGO_ENABLED=0 go build -trimpath -o /q .\n\nFROM alpine:3.21\nCOPY --from=build /q /usr/local/bin/q\n",
+        "go.mod": "module q\n\ngo 1.26\n",
+        "main.go": "// q: the interpreter of the Q runtime (persistent mode: one request envelope per stdin line,\n// one JSON response per stdout line).\npackage main\n\nfunc main() { serve() }\n"
+      }
+    }
+  ],
+  "patches": [
+    {
+      "id": "lua-5.4-5.4.7-r2",
+      "runtime": "lua",
+      "version": "5.4",
+      "tag": "5.4.7-r2",
+      "image": "ghcr.io/acme/runr-runtimes/lua",
+      "digest": "sha256:3b4c1f0e9d7a6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3928170f6e5d4c",
+      "level": "security",
+      "reason": {
+        "en": "Alpine 3.21.4 base image with the fixed musl",
+        "tr": "Düzeltilmiş musl ile Alpine 3.21.4 temel imajı"
+      },
+      "cves": [
+        "CVE-2026-31337"
+      ],
+      "url": "https://github.com/acme/runr-runtimes/security/advisories",
+      "upstream": "Lua 5.4.7",
+      "published_at": "2026-11-06T09:15:00Z"
+    }
+  ]
+}

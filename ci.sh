@@ -15,6 +15,7 @@ source "${SCRIPT_DIR}/lib/registry.sh"
 source "${SCRIPT_DIR}/lib/eol.sh"
 source "${SCRIPT_DIR}/lib/patch.sh"
 source "${SCRIPT_DIR}/lib/feed.sh"
+source "${SCRIPT_DIR}/lib/catalog.sh"
 
 # ── Help ──
 cmd_help() {
@@ -49,6 +50,13 @@ Commands:
   feed platform [--push] --version V --level LEVEL --reason-en TEXT --reason-tr TEXT [--url URL]
         [--out FILE]                  Add a RunR platform release to the patch feed
   feed validate FILE...               Check feed files against schema/patch-feed.v1.json
+  catalog build [--out FILE|-]        The runtime catalog of runtimes/*/runtime.yaml (the payload of
+                                      runtime-catalog:stable), checked, with a summary; --out writes it
+  catalog validate FILE...            Check catalog files against schema/runtime-catalog.v1.json
+  catalog publish [--push] [--out FILE]
+                                      Build the catalog and compare it with the published stable; --push
+                                      signs and publishes it when its runtimes or patches changed. A dry
+                                      run without --push.
   wrapper [--push] [--no-smoke]       The universal runtime wrapper (wrapper:<version of wrapper/main.go>,
                                       multi-arch on --push)
   wasm [--push] [--no-smoke] [rust|go|js|python|exec...]
@@ -89,6 +97,14 @@ Environment:
                   cosign key reference that signs the feed (default: env://RUNR_PATCH_FEED_COSIGN_KEY);
                   RUNR_PATCH_FEED_COSIGN_PASSWORD is its password
   PATCH_KEEP      Patches kept per runtime version, in the feed and the registry (default: 5)
+  CATALOG_SIGNING_KEY, CATALOG_KEY
+                  cosign key reference that signs the runtime catalog (default:
+                  env://RUNR_PATCH_FEED_COSIGN_KEY, the patch feed's) and the public key it is verified
+                  with (default: keys/patch-feed.pub); CATALOG_COSIGN_PASSWORD (default:
+                  RUNR_PATCH_FEED_COSIGN_PASSWORD) its password
+  CATALOG_REVISION, CATALOG_NOW
+                  source.revision (default: the checkout's HEAD) and generated_at (default: now) of the
+                  catalog
 
 Examples:
   ci.sh build python             Build + smoke-test the Python images (local, this host's platform)
@@ -97,6 +113,8 @@ Examples:
                                  Dry run of a zero-day patch of every current PHP version
   ci.sh feed show                Print the current patch feed
   ci.sh feed update              What the next feed update would publish and delete
+  ci.sh catalog build            The runtime catalog's runtimes, checked
+  ci.sh catalog publish          What the next catalog publish would change
   ci.sh wrapper --push           The wrapper image
   ci.sh wasm rust js             Two WebAssembly build images, local
   ci.sh ml-runtimes --list       The ML runtime image references
@@ -114,6 +132,7 @@ case "$command" in
   build)           cmd_build "$@" ;;
   patch)           cmd_patch "$@" ;;
   feed)            cmd_feed "$@" ;;
+  catalog)         cmd_catalog "$@" ;;
   wrapper)         cmd_build_wrapper "$@" ;;
   wasm)            cmd_build_wasm "$@" ;;
   ml-runtimes)     cmd_build_ml_runtimes "$@" ;;

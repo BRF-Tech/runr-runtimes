@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/BRF-Tech/runr-runtimes/blob/main/schema/runtime-catalog.v1.json",
+  "title": "RunR runtime catalog, schema 1",
+  "description": "The runtimes (executors) RunR offers, as manifests: one entry per runtimes/<id>/runtime.yaml of the repository the catalog was built from. Published as the OCI artifact ghcr.io/brf-tech/runr/runtime-catalog:stable (one layer of application/vnd.runr.runtime-catalog.v1+json, at most 8 MiB), signed with cosign. Each manifest is validated against RunR's runtime schema (api/resources/runtimes/runtime.schema.json of BRF-Tech/runr) by the RunR instance that reads it. lib/catalog.jq catalog_problems checks what this schema cannot: unique ids and paths, the manifest's id = the directory of its path, the catalog order, the files of dockerfile versions (present, at most 900 KB together), unique patch ids, id = <runtime>-<version>-<tag>, the tag a patch of the version, a patch's runtime in the catalog, at most 5 patches per runtime version.",
+  "type": "object",
+  "required": ["schema", "generated_at", "source", "runtimes"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "description": "The schema version of the document.",
+      "const": 1
+    },
+    "generated_at": {
+      "description": "When this version of the catalog was built.",
+      "$ref": "#/$defs/time"
+    },
+    "source": {
+      "description": "Where the catalog was built from.",
+      "type": "object",
+      "required": ["repository", "revision"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "description": "The repository's URL.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\s]+$"
+        },
+        "revision": {
+          "description": "The commit the catalog was built from.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "runtimes": {
+      "description": "One entry per runtimes/<id>/runtime.yaml: python, nodejs, go, php, tensorflow, pytorch first (those present), then the rest by path.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/runtime" }
+    },
+    "patches": {
+      "description": "Patches of the catalog's own runtime images, as patch-feed v1 patches[] entries (schema/patch-feed.v1.json). The official catalog leaves it empty: BRF-Tech's patches are in the patch feed.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/patch" }
+    }
+  },
+  "$defs": {
+    "runtime": {
+      "type": "object",
+      "required": ["path", "manifest"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "The manifest's path in the repository: runtimes/<id>/runtime.yaml.",
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^([A-Za-z0-9._-]+/)*[a-z][a-z0-9-]{0,31}/runtime\\.yaml$"
+        },
+        "manifest": {
+          "description": "The runtime.yaml as JSON (YAML 1.2 core schema: quoted versions stay strings), every \"@file\" of build.files replaced by the content of that file. Validated against RunR's runtime schema by the instance that reads it.",
+          "type": "object",
+          "required": ["apiVersion", "kind", "id"],
+          "properties": {
+            "id": { "type": "string" }
+          }
+        },
+        "files": {
+          "description": "Only for a runtime with a version that names a dockerfile: every regular file of the runtime's directory but runtime.yaml (not recursive), by name; the build context RunR builds the image from in each region. Names are ConfigMap keys; at most 50 files and 900 KB together.",
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 50,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[-._a-zA-Z0-9]{1,253}$",
+            "not": { "pattern": "^\\.(\\.|$)" }
+          },
+          "not": { "required": ["runtime.yaml"] },
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "if": {
+        "properties": {
+          "manifest": {
+            "properties": {
+              "versions": {
+                "type": "array",
+                "contains": { "type": "object", "required": ["dockerfile"] }
+              }
+            },
+            "required": ["versions"]
+          }
+        }
+      },
+      "then": { "required": ["files"] },
+      "else": { "properties": { "files": false } }
+    },
+    "time": {
+      "description": "A UTC time to the second.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$",
+      "format": "date-time"
+    },
+    "level": {
+      "description": "How urgent the patch is: routine (rebuilds, upstream releases), security, critical, zero-day.",
+      "enum": ["routine", "security", "critical", "zero-day"]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^[^\\r\\n\\t]+$"
+    },
+    "reason": {
+      "description": "Why the patch exists, short, in English and Turkish.",
+      "type": "object",
+      "required": ["en", "tr"],
+      "additionalProperties": false,
+      "properties": {
+        "en": { "$ref": "#/$defs/text" },
+        "tr": { "$ref": "#/$defs/text" }
+      }
+    },
+    "url": {
+      "description": "The advisory or release notes.",
+      "type": "string",
+      "maxLength": 2000,
+      "pattern": "^https://[^\\s]+$"
+    },
+    "patch": {
+      "description": "A patch-feed v1 patches[] entry (schema/patch-feed.v1.json), of a runtime of this catalog.",
+      "type": "object",
+      "required": ["id", "runtime", "version", "tag", "image", "digest", "level", "reason", "cves", "upstream", "published_at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "<runtime>-<version>-<tag>.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*-[0-9][0-9A-Za-z._-]*-r[1-9][0-9]*$"
+        },
+        "runtime": {
+          "description": "A runtime of this catalog (its id).",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "version": {
+          "description": "The floating tag the patch belongs to (major.minor).",
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+(-[a-z0-9]+)?$"
+        },
+        "tag": {
+          "description": "The immutable patch tag: <full upstream version>-r<n>.",
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[0-9]+\\.[0-9]+[0-9A-Za-z._-]*-r[1-9][0-9]*$"
+        },
+        "image": {
+          "description": "The image repository, without a tag.",
+          "type": "string",
+          "pattern": "^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$"
+        },
+        "digest": {
+          "description": "The digest of the patch's image index.",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "level": { "$ref": "#/$defs/level" },
+        "reason": { "$ref": "#/$defs/reason" },
+        "cves": {
+          "description": "The vulnerabilities the patch fixes: CVE or GHSA ids.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(CVE-[0-9]{4}-[0-9]{4,}|GHSA(-[23456789cfghjmpqrvwx]{4}){3})$"
+          }
+        },
+        "url": { "$ref": "#/$defs/url" },
+        "upstream": {
+          "description": "The upstream release the image runs: \"Lua 5.4.7\".",
+          "$ref": "#/$defs/text"
+        },
+        "published_at": { "$ref": "#/$defs/time" },
+        "deadline_at": {
+          "description": "When instances must run the patch (required for critical and zero-day).",
+          "$ref": "#/$defs/time"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["level"],
+            "properties": { "level": { "enum": ["critical", "zero-day"] } }
+          },
+          "then": { "required": ["deadline_at"] }
+        }
+      ]
+    }
+  }
+}
