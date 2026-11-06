@@ -1,0 +1,5 @@
+# The upstream releases of this runtime the language bot tested green (.github/workflows/lang-test.yml):
+# "<major.minor> <full version>", one line per version, written by ci/lang-tested.sh. The publish
+# workflow (LANG_GATE=1, lib/patch.sh) pushes a routine build of another upstream version than the
+# one a tag already runs only when it is listed here; until then the build is held. A person's
+# patch (patch.yml) is never held.

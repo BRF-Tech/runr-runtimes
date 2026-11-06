@@ -143,13 +143,19 @@ discover_language_versions() {
 # the immutable <full version>-r<n>, or nothing when the build is the image already published.
 cmd_build() {
   build_options "ci.sh build" "$@" || return 1
-  local push="$_push" smoke="$_smoke" only=() arg
+  local push="$_push" smoke="$_smoke" only=() arg one=""
   for arg in ${_args[@]+"${_args[@]}"}; do
     case "$arg" in
       python|nodejs|go|php) only+=("$arg") ;;
-      *) echo -e "${RED}unknown argument: ${arg} (python, nodejs, go, php, --push, --no-smoke)${NC}"; return 1 ;;
+      --version=*) one="${arg#--version=}" ;;
+      *) echo -e "${RED}unknown argument: ${arg} (python, nodejs, go, php, --version=X.Y, --push, --no-smoke)${NC}"; return 1 ;;
     esac
   done
+  # --version=X.Y: that version of the one runtime named (the language bot's test build)
+  if [ -n "$one" ] && { [ "${#only[@]}" != 1 ] || ! [[ "$one" =~ ^[0-9]+\.[0-9]+$ ]]; }; then
+    echo -e "${RED}--version=X.Y builds one version of one runtime: ci.sh build python --version=3.16${NC}"
+    return 1
+  fi
   if [ "$push" = "1" ]; then
     patch_tools || return 1
   fi
@@ -168,6 +174,13 @@ cmd_build() {
     [ -z "$versions" ] && continue
     dir="$(runtime_dir "$runtime")"
 
+    if [ -n "$one" ]; then
+      if [[ " ${versions} " != *" ${one} "* ]]; then
+        echo -e "${RED}${runtime} ${one} is not a current version (${versions# }): not on Docker Hub, below the minimum, or end-of-life${NC}"
+        return 1
+      fi
+      versions="$one"
+    fi
     for version in $versions; do
       tag="${REGISTRY}/exec-${runtime}:${version}"
 
@@ -184,6 +197,8 @@ cmd_build() {
       if [ "$smoke" = "1" ]; then
         runtime_smoke "$tag" "$runtime" "$version" || return 1
       fi
+      # BUILD_REPORT: "runtime version full" of every image built and smoke-tested (the language bot)
+      if [ -n "${BUILD_REPORT:-}" ]; then echo "${runtime} ${version} ${SMOKE_FULL_VERSION}" >> "$BUILD_REPORT"; fi
       built+=("${runtime}|${version}|${SMOKE_FULL_VERSION}|${dir}|--build-arg|VERSION=${version}")
       total=$((total + 1))
       echo ""
@@ -198,7 +213,7 @@ cmd_build() {
 
   echo "========================================="
   if [ "$push" = "1" ]; then
-    echo "Done. ${total} images built and smoke-tested: ${PATCH_PUBLISHED:-0} new patches pushed, ${PATCH_UNCHANGED:-0} unchanged."
+    echo "Done. ${total} images built and smoke-tested: ${PATCH_PUBLISHED:-0} new patches pushed, ${PATCH_UNCHANGED:-0} unchanged, ${PATCH_HELD:-0} held for the language bot."
     echo "The patch feed lists them after its next update (ci.sh feed update --push)."
   else
     echo "Done. ${total} images built."

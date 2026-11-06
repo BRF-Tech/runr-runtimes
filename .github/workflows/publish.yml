@@ -4,7 +4,9 @@
 #     change that touches a GPU image too gets a notice to run the heavy-images workflow
 #   - by hand: the images named (keys of ci/images.sh, "cpu" for all of them, "languages")
 #   - weekly: the language runtimes (exec-python, -nodejs, -go, -php), whose tags follow the
-#     upstream patch releases and new versions
+#     upstream patch releases and new versions once the language bot tested them (LANG_GATE:
+#     another upstream version than a tag runs is held until runtimes/<runtime>/tested-versions
+#     lists it; lang-test.yml)
 # Every job builds its image(s) locally, smoke-tests them and only then pushes (ci.sh … --push):
 # multi-arch (linux/amd64 + linux/arm64) through ci.sh's own buildx builder, the ML runtime CPU
 # images (linux/amd64) exactly as tested.
@@ -158,6 +160,9 @@ jobs:
         env:
           IMAGE: ${{ matrix.image }}
           BUILDER_NAME: runr-multiarch
+          # a new upstream version of a language runtime waits for the language bot
+          # (lang-test.yml, runtimes/<runtime>/tested-versions; lib/patch.sh)
+          LANG_GATE: '1'
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

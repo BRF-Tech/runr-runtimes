@@ -32,6 +32,14 @@
 #
 # Other images adopt patches by calling patch_publish_image from their push with an upstream full
 # version (README.md: "Other images").
+#
+# The language bot's gate (LANG_GATE=1, the publish workflow): a routine build of an upstream
+# version that is not the one the floating tag runs is published only when the language bot
+# tested it, the line "<major.minor> <full version>" of runtimes/<runtime>/tested-versions
+# (.github/workflows/lang-test.yml writes it when the version passed). Until then the build is held:
+# nothing is pushed and the published patch stays. A rebuild of the published upstream version (a
+# base image refresh, a runtime update) is never held, nor a patch above routine (the patch
+# workflow, a person's decision).
 
 PATCH_KEEP="${PATCH_KEEP:-5}"
 PATCH_LANGUAGE_RUNTIMES="python nodejs go php"
@@ -374,6 +382,14 @@ patch_publish_image() {
     return 0
   fi
 
+  if ! patch_gate_passes "$runtime" "$version" "$full" "$current_tag"; then
+    echo -e "  ${YELLOW}held: ${floating} builds ${full}, which the language bot has not tested (runtimes/${runtime}/tested-versions); ${current_tag:-nothing published} stays${NC}"
+    PATCH_HELD=$(( ${PATCH_HELD:-0} + 1 ))
+    PATCH_SUMMARY+=("${floating}  held  ${full} (not tested yet)")
+    patch_cleanup "$work"
+    return 0
+  fi
+
   tags=$(registry_tags_checked "$repo") || { patch_cleanup "$work"; return 1; }
   # shellcheck disable=SC2086 # the tags, one per word
   tag=$(patch_next_tag "$full" $tags)
@@ -436,6 +452,27 @@ patch_publish_image() {
   patch_cleanup "$work"
 }
 
+# patch_tested RUNTIME VERSION — the full version the language bot tested for VERSION (the line
+# "VERSION FULL" of runtimes/RUNTIME/tested-versions); nothing when it tested none
+patch_tested() {
+  local file
+  file="$(runtime_dir "$1")/tested-versions"
+  [ -f "$file" ] || return 0
+  awk -v v="$2" '$1 == v && !/^#/ { full = $2 } END { if (full != "") print full }' "$file"
+}
+
+# patch_gate_passes RUNTIME VERSION FULL CURRENT_TAG — may a build of FULL be published under the
+# language bot's gate? Yes without the gate (LANG_GATE unset or 0), for a request above routine,
+# for the upstream version CURRENT_TAG (the floating tag's patch) already runs, and for the one the
+# bot tested; no for any other
+patch_gate_passes() {
+  local runtime="$1" version="$2" full="$3" current="${4%-r*}"
+  [ "${LANG_GATE:-0}" = 1 ] || return 0
+  [ "$PATCH_REQ_LEVEL" = routine ] || return 0
+  [ -n "$4" ] && [ "$current" = "$full" ] && return 0
+  [ "$(patch_tested "$runtime" "$version")" = "$full" ]
+}
+
 # patch_cleanup DIR — removes a work directory of patch_publish_image (its files, then itself)
 patch_cleanup() {
   rm -f -- "${1:?}"/*.json
@@ -450,6 +487,7 @@ patch_push_images() {
   shift
   PATCH_PUBLISHED=0
   PATCH_UNCHANGED=0
+  PATCH_HELD=0
   PATCH_SUMMARY=()
   ensure_buildx
   for entry in "$@"; do
