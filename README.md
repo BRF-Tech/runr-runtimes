@@ -4,7 +4,9 @@ The language runtime images of [RunR](https://github.com/BRF-Tech/runr), the scr
 smoke-test and publish them, and the mirror of the third-party images RunR uses. GitHub Actions
 builds every image here and publishes it to `ghcr.io/brf-tech/runr/`, under the same names and tags
 as before the images moved out of the RunR repository. Existing installs and the API's runtime
-discovery need no change.
+discovery need no change. The manifests of the runtimes are also published here as a signed
+[runtime catalog](#the-runtime-catalog), so a new runtime reaches RunR installations without a
+RunR release.
 
 RunR itself (the API, console, Helm chart, region agent, queue consumer, supply-chain and
 image-upload images, the Spin shim and the end-to-end harness) stays in
@@ -55,17 +57,27 @@ What the images are:
 
 Each `runtimes/<id>/runtime.yaml` is the manifest of a built-in runtime of RunR's catalog. It
 defines the handler, the starter code, the build and the versions (for the language and ML
-runtimes, the tags of the image above). The RunR API ships the catalog as
-`api/resources/runtimes/builtin.json`. After you change a manifest or a file it references with
-`@file`, regenerate that bundle in a checkout of BRF-Tech/runr:
+runtimes, the tags of the image above). RunR installations read these manifests from the signed
+[runtime catalog](#the-runtime-catalog) this repository publishes, so a new or changed runtime
+reaches them without a RunR release.
+
+A RunR release also ships a copy of the catalog, `api/resources/runtimes/builtin.json`. To update
+that copy after you change a manifest or a file it references with `@file`, regenerate it in a
+checkout of BRF-Tech/runr:
 
 ```bash
 cd runr/api
 RUNR_RUNTIME_CATALOG=../../runr-runtimes/runtimes php artisan runtimes:bundle
 ```
 
-The CI workflow validates the manifests against RunR's runtime schema, and `test/catalog_test.sh`
-checks that the files and image tags they reference are here.
+The CI workflow validates the manifests against RunR's runtime schema and builds the runtime
+catalog from them. `test/catalog_test.sh` checks that the files and image tags they reference are
+here.
+
+To bring a language to RunR from a repository of your own (public or private) rather than this
+one, start from the sample executor repository
+[BRF-Tech/runr-sample-custom-executor](https://github.com/BRF-Tech/runr-sample-custom-executor)
+and RunR's guide [docs/executor-development.md](https://github.com/BRF-Tech/runr/blob/main/docs/executor-development.md).
 
 ## Layout
 
@@ -74,13 +86,13 @@ checks that the files and image tags they reference are here.
 | `runtimes/<id>/` | The 11 built-in runtimes: `runtime.yaml`, Dockerfile, handler server or toolchain files. They stay together in one directory because the API's `runtimes:bundle` reads `*/runtime.yaml` of one directory. |
 | `wrapper/` | `runr-wrapper` (Go) and its tests |
 | `hf-serve/` | hf-serve (Python), its CPU and CUDA Dockerfiles and its tests |
-| `ci.sh`, `lib/` | Build, smoke-test, push, patch, patch feed, mirror and EOL commands |
+| `ci.sh`, `lib/` | Build, smoke-test, push, patch, patch feed, runtime catalog, mirror and EOL commands |
 | `test/` | Shell tests of `ci.sh`, run without Docker or a registry |
 | `ci/` | `check-dockerfiles.sh`, `check-reqs-mirror.sh` and `images.sh` (the image selection of the workflows) |
-| `schema/` | The patch feed's JSON Schema (`patch-feed.v1.json`) and an example feed |
-| `keys/` | `patch-feed.pub`, the public key of the patch feed's signatures |
+| `schema/` | The JSON Schemas of the patch feed (`patch-feed.v1.json`) and the runtime catalog (`runtime-catalog.v1.json`), an example of each |
+| `keys/` | `patch-feed.pub`, the public key of the signatures of the patch feed and the runtime catalog |
 | `.github/workflows/` | CI, publish, patch, platform release, heavy GPU images, reqs mirror |
-| `.github/actions/` | `patch-feed-tools`: oras, cosign and check-jsonschema for the feed jobs |
+| `.github/actions/` | `patch-feed-tools`: oras, cosign, check-jsonschema and PyYAML for the feed and catalog jobs |
 | `PACKAGES.md` | The GHCR packages this repository writes to, and the access each one needs |
 
 ## Building locally
@@ -101,10 +113,13 @@ You need bash, Docker with buildx, and curl. `mirror-*` also needs
 ./ci.sh patch php --level zero-day --reason-en "…" --reason-tr "…"   # dry run of a patch
 ./ci.sh feed show                  # the current patch feed
 ./ci.sh feed update                # what the next feed update would publish and delete
+./ci.sh catalog build              # the runtime catalog of runtimes/, checked (--out FILE writes it)
+./ci.sh catalog publish            # what the next catalog publish would change
 ./ci.sh help
 ```
 
-`patch` and `feed` also need [jq](https://jqlang.org); publishing the feed (`--push`) needs
+`patch`, `feed` and `catalog` also need [jq](https://jqlang.org); `catalog` also needs python3 with
+[PyYAML](https://pypi.org/project/PyYAML/). Publishing the feed or the catalog (`--push`) needs
 [oras](https://oras.land), [cosign](https://docs.sigstore.dev) and
 [check-jsonschema](https://github.com/python-jsonschema/check-jsonschema).
 
@@ -140,13 +155,13 @@ image instead of pulling the published one (see `runtime/lib/runtime-images.sh` 
 
 Every workflow pushes with its own `GITHUB_TOKEN` (`permissions: packages: write`); there is no
 personal token or bot account. Each existing package must grant this repository write access
-first: see [PACKAGES.md](PACKAGES.md). The patch feed is signed with a key of the repository's
-Actions secrets (PACKAGES.md).
+first: see [PACKAGES.md](PACKAGES.md). The patch feed and the runtime catalog are signed with a
+key of the repository's Actions secrets (PACKAGES.md).
 
 | Workflow | When | What |
 |----------|------|------|
 | `ci.yml` (CI) | pull requests, pushes to other branches | shellcheck, actionlint, the shell tests, `check-dockerfiles.sh`, `check-reqs-mirror.sh`, the wrapper's Go tests, hf-serve's pytest, the manifests against RunR's runtime schema, the patch feed's schema and example, and on pull requests a local build + smoke test (no push) of every CPU image the change touches |
-| `publish.yml` (Publish images) | push to `main`; by hand; weekly (Monday 03:17 UTC) | Build, smoke-test and push the CPU images. On a push: the images whose sources changed. By hand: the keys named (`cpu` for all of them, `languages`). Weekly: the language runtimes, which follow upstream patch releases and new versions. Before the language runtimes, the base images are mirrored (`mirror-bases`), so a newly discovered version builds. The language runtimes are published as routine patches; then the feed job updates the patch feed and deletes old patch tags. |
+| `publish.yml` (Publish images) | push to `main`; by hand; weekly (Monday 03:17 UTC) | Build, smoke-test and push the CPU images. On a push: the images whose sources changed. By hand: the keys named (`cpu` for all of them, `languages`). Weekly: the language runtimes, which follow upstream patch releases and new versions. Before the language runtimes, the base images are mirrored (`mirror-bases`), so a newly discovered version builds. The language runtimes are published as routine patches; then the feed job updates the patch feed and deletes old patch tags. On a push and by hand, the catalog job then publishes the [runtime catalog](#the-runtime-catalog) when the manifests changed and no image job failed. |
 | `patch.yml` (Patch runtime images) | by hand | A patch on request (a zero-day): the runtimes and versions named rebuilt on freshly mirrored bases, smoke-tested, published as patches of the level given, the patch feed updated. See [A zero-day patch](#a-zero-day-patch). |
 | `platform-release.yml` (Platform release in the patch feed) | by hand | A RunR platform release that carries a level, added to the patch feed |
 | `heavy.yml` (Heavy images, GPU) | by hand, on any branch; weekly (Monday 04:17 UTC: `exec-pytorch` and `exec-tensorflow` `-gpu`) | `exec-pytorch`/`exec-tensorflow` `-gpu` and `hf-serve` `-cuda`, one image per job on a runner with its preinstalled toolchains removed. Without a GPU on the runner, the smoke test checks the CUDA build. `push: false` builds and smoke-tests only. |
@@ -313,6 +328,119 @@ image adopts them in its `--push` path:
    to `patch.yml`'s inputs and outputs, and check its Dockerfile builds reproducibly (two builds
    without cache, the same digest).
 
+## The runtime catalog
+
+`ghcr.io/brf-tech/runr/runtime-catalog:stable` is the signed list of the runtimes RunR offers: the
+manifest of every `runtimes/<id>/runtime.yaml` in one JSON document. RunR installations read it
+periodically and check its signature, so a runtime added or changed here reaches them without a
+RunR release. How an installation uses it is documented in
+[RunR's docs](https://github.com/BRF-Tech/runr/blob/main/docs/runtimes.md).
+
+### The artifact
+
+The catalog is an OCI artifact like the patch feed: an image manifest with the `artifactType`
+`application/vnd.runr.runtime-catalog.v1+json`, an empty config
+(`application/vnd.oci.empty.v1+json`) and one layer of that media type, at most 8 MiB. The layer
+is the JSON document of [`schema/runtime-catalog.v1.json`](schema/runtime-catalog.v1.json) (an
+example: [`schema/runtime-catalog.example.json`](schema/runtime-catalog.example.json)).
+
+| Tag | What it names |
+|-----|---------------|
+| `stable` | the catalog RunR reads; only ever a signed one |
+| `<YYYYMMDDHHMM>-<first 12 hex digits of the commit>` | every published catalog, never moved (`202611071200-3a65d02b3a71`) |
+| `stable-candidate` | the last catalog pushed, before it was signed |
+| `sha256-<digest>.sig` | the cosign signatures |
+
+### The document
+
+```json
+{
+  "schema": 1,
+  "generated_at": "2026-11-07T12:00:00Z",
+  "source": {"repository": "https://github.com/BRF-Tech/runr-runtimes", "revision": "<40 hex digits>"},
+  "runtimes": [
+    {"path": "runtimes/python/runtime.yaml", "manifest": {"apiVersion": "runr.sh/v1", "kind": "Runtime", "id": "python", "…": "…"}},
+    {"path": "runtimes/q/runtime.yaml", "manifest": {"…": "…"}, "files": {"Dockerfile": "FROM …", "main.go": "…"}}
+  ],
+  "patches": []
+}
+```
+
+- `generated_at` is when the catalog was built, `source.revision` the commit it was built from.
+- `runtimes` has one entry per `runtimes/<id>/runtime.yaml`. The manifest's `id` must be the
+  directory's name. The order is RunR's catalog order: python, nodejs, go, php, tensorflow,
+  pytorch, then the rest by path.
+- `manifest` is the `runtime.yaml` as JSON, read with the YAML 1.2 core schema: only `true` and
+  `false` are booleans, and quoted versions (`"3.14"`), `yes`, `no` and dates stay strings. A
+  duplicate key is an error.
+- Every `@file` value of `build.files` is replaced by the content of that file: a string value, or
+  each variant of an object such as `{http: "@wrapper_http.go", schedule: "@wrapper_schedule.go"}`.
+  The path is relative to the manifest's directory and must stay inside it; CRLF becomes LF. RunR's
+  own bundle (`BuiltinCatalog::readSources`) does the same, so a runtime reads the same from the
+  catalog and from the copy a release ships.
+- `files` appears only for a runtime with a version that names a `dockerfile`, which RunR builds in
+  each region. It holds every regular file of the runtime's directory except `runtime.yaml` (not
+  recursive, CRLF as LF). The names must be ConfigMap keys, with at most 50 files and 900 KB
+  together. None of this repository's runtimes has one today.
+- `patches` holds patch-feed v1 `patches[]` entries for a catalog's own runtime images. This
+  catalog leaves it empty: BRF-Tech's patches are in the [patch feed](#the-feed).
+
+`ci.sh catalog validate` checks the schema and the rules it cannot express (`lib/catalog.jq`
+`catalog_problems`): unique ids and paths, the order, a dockerfile among the files, the 900 KB, and
+the patch rules of the feed. Each `manifest` is checked against RunR's runtime schema by CI here
+and again by the RunR installation that reads it.
+
+### Publishing
+
+The catalog job of `publish.yml` runs `ci.sh catalog publish --push` on a push to `main` and by
+hand. It runs after the image jobs, and only when none of them failed, so a new runtime's images
+exist before the catalog names them. A publish:
+
+1. builds the catalog from `runtimes/` (`lib/catalog.py`) and checks it;
+2. pulls the current `stable` and verifies its signature (when there is none, this is the first
+   publish);
+3. compares the runtimes and patches of both, but not `generated_at` or `source.revision`, so an
+   unchanged catalog is not published again;
+4. pushes the new catalog as `stable-candidate`, signs it by digest, verifies the signature with
+   [`keys/patch-feed.pub`](keys/patch-feed.pub), then tags it `stable` and its immutable tag.
+
+One publisher runs at a time (the `runtime-catalog` concurrency group). A push refuses
+uncommitted changes in `runtimes/`, because `source.revision` would not name them. Without
+`--push`, `ci.sh catalog publish` is a dry run: it prints the runtimes it would add (`+`), change
+(`~`) and remove (`-`).
+
+The catalog is signed with the **patch feed's key pair**. Both artifacts carry the same trust
+("BRF-Tech/runr-runtimes says so"). A second key would live in the same repository's Actions
+secrets, so it would give little real separation. RunR also already pins `keys/patch-feed.pub`.
+RunR accepts a separate catalog key (`RUNR_RUNTIME_CATALOG_PUBLIC_KEY`), so the catalog can get
+its own pair later. `CATALOG_SIGNING_KEY` and `CATALOG_KEY` then name it here (`ci.sh help`).
+
+To read and check the catalog:
+
+```bash
+cosign verify --key keys/patch-feed.pub --insecure-ignore-tlog=true ghcr.io/brf-tech/runr/runtime-catalog:stable
+oras pull ghcr.io/brf-tech/runr/runtime-catalog:stable    # writes runtime-catalog.json
+```
+
+### A new runtime without a RunR release
+
+1. Add `runtimes/<id>/`: its `runtime.yaml` (valid against
+   [RunR's runtime schema](https://github.com/BRF-Tech/runr/blob/main/api/resources/runtimes/runtime.schema.json),
+   `id` = the directory's name), its Dockerfile and the language's handler server. Its versions
+   are images this repository publishes (`versionDiscovery` of `exec-<id>`, or `versions[].image`).
+2. Give it an image key in `ci/images.sh` with the `ci.sh` command that builds it, so the publish
+   workflow builds, smoke-tests and pushes its images. `test/images_test.sh` fails for a runtime
+   directory without a key. A new package needs nothing (PACKAGES.md). Update the runtime count
+   of `test/catalog_test.sh`.
+3. Open a pull request. CI checks the manifest against RunR's schema, builds and checks the
+   catalog, and builds and smoke-tests the new images.
+4. Merge it. The publish workflow pushes the images, then the catalog job publishes the catalog
+   with the new runtime. RunR installations offer it after their next catalog sync.
+
+To bring a language to RunR from your own repository instead, see
+[BRF-Tech/runr-sample-custom-executor](https://github.com/BRF-Tech/runr-sample-custom-executor) and
+RunR's [executor development guide](https://github.com/BRF-Tech/runr/blob/main/docs/executor-development.md).
+
 ## The reqs mirror
 
 `ghcr.io/brf-tech/runr/reqs/` holds every third-party image RunR uses, copied multi-arch from
@@ -335,7 +463,7 @@ discovered like the runtime versions (`mirror-bases`).
 ## Tests
 
 ```bash
-for t in test/*_test.sh; do bash "$t"; done   # without Docker or a registry (jq; check-jsonschema for the feed's schema)
+for t in test/*_test.sh; do bash "$t"; done   # without Docker or a registry (jq; python3 with PyYAML for the catalog; check-jsonschema for the schemas)
 bash ci/check-dockerfiles.sh
 bash ci/check-reqs-mirror.sh
 (cd wrapper && go test -race ./...)

@@ -113,7 +113,7 @@ How the pair was made, and how a new one is made:
    ```
 
 4. Keep `cosign.key` and its password in the password manager, then delete the local copy.
-5. Give RunR the public key (the instances verify the feed with it).
+5. Give RunR the public key (the instances verify the feed and the runtime catalog with it).
 
 Every feed update checks the pair: it verifies the current feed's signature with
 `keys/patch-feed.pub` before it builds on it, and the new feed's signature before it moves `feed`.
@@ -128,6 +128,42 @@ together, then run one feed update from a shell that names the old public key, s
 PATCH_FEED_PREVIOUS_KEY=old-patch-feed.pub PATCH_FEED_SIGNING_KEY=cosign.key \
   RUNR_PATCH_FEED_COSIGN_PASSWORD=… GHCR_TOKEN=… ./ci.sh feed update --push
 ```
+
+## The runtime catalog (publish workflow)
+
+| Package | Tags | Workflow |
+|---------|------|----------|
+| `runr/runtime-catalog` | `stable` (the signed catalog RunR installations read), `<YYYYMMDDHHMM>-<12 hex of the commit>` (every published catalog, never moved), `stable-candidate` (the last pushed), `sha256-<digest>.sig` (cosign signatures) | the catalog job of publish |
+
+The first catalog publish creates the package. Like `runr/runtime-patches`, it is linked to this
+repository (the workflow's `GITHUB_TOKEN` and the catalog's `org.opencontainers.image.source`
+annotation), so it should be public from the first push. Every RunR installation must read it
+without credentials, so check once after the first publish:
+
+```bash
+oras manifest fetch ghcr.io/brf-tech/runr/runtime-catalog:stable    # with no docker/oras login
+```
+
+If that is refused, or the package settings show it private, **set its visibility to public**
+there, once (<https://github.com/orgs/BRF-Tech/packages/container/runr%2Fruntime-catalog/settings>).
+Until then the catalog job still publishes (it reads with `GITHUB_TOKEN`), but installations
+cannot read the catalog.
+
+The catalog is signed with the patch feed's key pair (below): the same `keys/patch-feed.pub` and
+the same secrets `RUNR_PATCH_FEED_COSIGN_KEY` and `RUNR_PATCH_FEED_COSIGN_PASSWORD`. The reasons are
+in README.md ("The runtime catalog"). A key rotation of the patch feed rotates the catalog's key
+too: the first catalog publish after it needs the old public key once, as the feed update does:
+
+```bash
+CATALOG_PREVIOUS_KEY=old-patch-feed.pub CATALOG_SIGNING_KEY=cosign.key \
+  RUNR_PATCH_FEED_COSIGN_PASSWORD=… GHCR_USERNAME=… GHCR_TOKEN=… ./ci.sh catalog publish --push
+```
+
+A dedicated catalog key later: generate a pair as below, commit its public key (for example
+`keys/runtime-catalog.pub`), store the private key and its password as two new secrets, pass them
+to the catalog job as `CATALOG_SIGNING_KEY=env://<secret>`, `CATALOG_COSIGN_PASSWORD` and
+`CATALOG_KEY=keys/runtime-catalog.pub`, and give RunR the new public key
+(`RUNR_RUNTIME_CATALOG_PUBLIC_KEY`).
 
 ## The reqs mirror (mirror workflow, and mirror-bases of the publish and patch workflows)
 

@@ -9,6 +9,10 @@ How the runtimes behave inside RunR (handlers, triggers, versions, the catalog) 
 [RunR's docs](https://github.com/BRF-Tech/runr/blob/main/docs/runtimes.md). Bugs and features of RunR
 itself belong in [BRF-Tech/runr](https://github.com/BRF-Tech/runr/issues).
 
+To bring a language to RunR from a repository of your own (public or private) instead of this
+one, start from [BRF-Tech/runr-sample-custom-executor](https://github.com/BRF-Tech/runr-sample-custom-executor)
+and read RunR's [executor development guide](https://github.com/BRF-Tech/runr/blob/main/docs/executor-development.md).
+
 ## Making a change
 
 1. Fork the repository and create a branch from `main`.
@@ -18,7 +22,8 @@ itself belong in [BRF-Tech/runr](https://github.com/BRF-Tech/runr/issues).
    heavy-images workflow on your branch when a GPU image is affected.
 
 ```bash
-for t in test/*_test.sh; do bash "$t"; done
+for t in test/*_test.sh; do bash "$t"; done   # jq, python3 with PyYAML, check-jsonschema
+./ci.sh catalog build              # the runtime catalog of runtimes/, checked
 bash ci/check-dockerfiles.sh
 bash ci/check-reqs-mirror.sh
 (cd wrapper && gofmt -l . && go vet ./... && go test -race ./...)
@@ -30,9 +35,15 @@ Some rules:
 
 - **Base images** come from the reqs mirror (`ghcr.io/brf-tech/runr/reqs/…`), never from Docker
   Hub. Add a new one to `REQS_IMAGES` in `lib/mirror.sh`.
-- **A catalog manifest** (`runtimes/<id>/runtime.yaml`) or a file it references is bundled by RunR's
-  API. Mention such a change in the pull request: RunR picks it up with `php artisan runtimes:bundle`
-  (see [README.md](README.md#the-catalog-manifests)).
+- **A catalog manifest** (`runtimes/<id>/runtime.yaml`) or a file it references goes into the
+  signed runtime catalog once the change is merged: RunR installations pick it up at their next
+  catalog sync, without a RunR release (see [README.md](README.md#the-runtime-catalog)). Mention
+  such a change in the pull request; the copy a RunR release ships is updated with
+  `php artisan runtimes:bundle` (see [README.md](README.md#the-catalog-manifests)).
+- **A new runtime** is a directory `runtimes/<id>/` with its manifest (`id` = the directory's
+  name), Dockerfile and handler server, an image key in `ci/images.sh`, and the runtime count of
+  `test/catalog_test.sh` raised. See
+  [README.md](README.md#a-new-runtime-without-a-runr-release).
 - **A new version.** When installs should get the change as a new version, raise the version with
   it: the wrapper's `const version`, hf-serve's `__version__`, or a WebAssembly runtime's `version`.
 
