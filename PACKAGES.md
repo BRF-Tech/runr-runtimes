@@ -36,6 +36,12 @@ show it private, set it to public there.
 | `runr/wrapper` | `ghcr.io/brf-tech/runr/wrapper` | publish |
 | `runr/hf-serve` | `ghcr.io/brf-tech/runr/hf-serve` | publish (CPU), heavy (`-cuda`) |
 
+The language bot (`lang-test.yml`) pushes the image it tests as
+`ghcr.io/brf-tech/runr/candidates/exec-<runtime>:<full version>` (packages `runr/candidates/exec-python`,
+`-nodejs`, `-go`, `-php`, created by the workflow on its first test of each runtime, public like
+this repository). RunR's e2e pulls it from there; RunR never discovers versions in that namespace.
+Its tags are test artifacts: they may be deleted at any time.
+
 `ci.sh eol --prune` deletes end-of-life `exec-*` versions through the GitHub Packages API. It needs
 a token that may delete package versions (`GHCR_TOKEN`); it is not part of a workflow.
 

@@ -88,7 +88,7 @@ and RunR's guide [docs/executor-development.md](https://github.com/BRF-Tech/runr
 | `hf-serve/` | hf-serve (Python), its CPU and CUDA Dockerfiles and its tests |
 | `ci.sh`, `lib/` | Build, smoke-test, push, patch, patch feed, runtime catalog, mirror and EOL commands |
 | `test/` | Shell tests of `ci.sh`, run without Docker or a registry |
-| `ci/` | `check-dockerfiles.sh`, `check-reqs-mirror.sh` and `images.sh` (the image selection of the workflows) |
+| `ci/` | `check-dockerfiles.sh`, `check-reqs-mirror.sh`, `images.sh` (the image selection of the workflows), `lang-bot.sh` and `lang-ssh-key.sh` (the language bot) |
 | `schema/` | The JSON Schemas of the patch feed (`patch-feed.v1.json`) and the runtime catalog (`runtime-catalog.v1.json`), an example of each |
 | `keys/` | `patch-feed.pub`, the public key of the signatures of the patch feed and the runtime catalog |
 | `.github/workflows/` | CI, publish, patch, platform release, heavy GPU images, reqs mirror |
@@ -110,6 +110,7 @@ You need bash, Docker with buildx, and curl. `mirror-*` also needs
 ./ci.sh hf-serve cpu               # hf-serve:<version> (cpu|cuda)
 ./ci.sh mirror-reqs --dry-run      # what the mirror would copy
 ./ci.sh eol                        # EOL report of the published exec-* tags
+./ci.sh watch                      # the upstream releases the images do not follow yet
 ./ci.sh patch php --level zero-day --reason-en "…" --reason-tr "…"   # dry run of a patch
 ./ci.sh feed show                  # the current patch feed
 ./ci.sh feed update                # what the next feed update would publish and delete
@@ -161,11 +162,13 @@ key of the repository's Actions secrets (PACKAGES.md).
 | Workflow | When | What |
 |----------|------|------|
 | `ci.yml` (CI) | pull requests, pushes to other branches | shellcheck, actionlint, the shell tests, `check-dockerfiles.sh`, `check-reqs-mirror.sh`, the wrapper's Go tests, hf-serve's pytest, the manifests against RunR's runtime schema, the patch feed's schema and example, and on pull requests a local build + smoke test (no push) of every CPU image the change touches |
-| `publish.yml` (Publish images) | push to `main`; by hand; weekly (Monday 03:17 UTC) | Build, smoke-test and push the CPU images. On a push: the images whose sources changed. By hand: the keys named (`cpu` for all of them, `languages`). Weekly: the language runtimes, which follow upstream patch releases and new versions. Before the language runtimes, the base images are mirrored (`mirror-bases`), so a newly discovered version builds. The language runtimes are published as routine patches; then the feed job updates the patch feed and deletes old patch tags. On a push and by hand, the catalog job then publishes the [runtime catalog](#the-runtime-catalog) when the manifests changed and no image job failed. |
+| `publish.yml` (Publish images) | push to `main`; by hand; weekly (Monday 03:17 UTC) | Build, smoke-test and push the CPU images. On a push: the images whose sources changed. By hand: the keys named (`cpu` for all of them, `languages`). Weekly: the language runtimes, which follow upstream patch releases and new versions once the language bot tested them ([the gate](#the-language-bot)). Before the language runtimes, the base images are mirrored (`mirror-bases`), so a newly discovered version builds. The language runtimes are published as routine patches; then the feed job updates the patch feed and deletes old patch tags. On a push and by hand, the catalog job then publishes the [runtime catalog](#the-runtime-catalog) when the manifests changed and no image job failed. |
 | `patch.yml` (Patch runtime images) | by hand | A patch on request (a zero-day): the runtimes and versions named rebuilt on freshly mirrored bases, smoke-tested, published as patches of the level given, the patch feed updated. See [A zero-day patch](#a-zero-day-patch). |
 | `platform-release.yml` (Platform release in the patch feed) | by hand | A RunR platform release that carries a level, added to the patch feed |
 | `heavy.yml` (Heavy images, GPU) | by hand, on any branch; weekly (Monday 04:17 UTC: `exec-pytorch` and `exec-tensorflow` `-gpu`) | `exec-pytorch`/`exec-tensorflow` `-gpu` and `hf-serve` `-cuda`, one image per job on a runner with its preinstalled toolchains removed. Without a GPU on the runner, the smoke test checks the CUDA build. `push: false` builds and smoke-tests only. |
 | `mirror.yml` (Mirror reqs images) | by hand; weekly (Monday 02:17 UTC) | `ci.sh mirror-reqs` and `ci.sh mirror-bases` |
+| `lang-releases.yml` (Language releases) | weekly (Monday 00:47 UTC); by hand | `ci.sh watch`: an issue per upstream release the images do not follow yet ([The language bot](#the-language-bot)) |
+| `lang-test.yml` (Language tests) | after Language releases; by hand | Each new version built, smoke-tested and tested with RunR's e2e; green ones committed on `main` and published, red ones held ([The language bot](#the-language-bot)) |
 
 Which images a change touches (`ci/images.sh`, tested by `test/images_test.sh`):
 
@@ -184,6 +187,72 @@ version changes (see the table above). When a change should reach installs as a 
 the version with it (the wrapper's `const version`, hf-serve's `__version__`, a WebAssembly
 runtime's `version`). Then update the pins in BRF-Tech/runr: `runtime/lib/runtime-images.sh`, the
 API and Helm defaults, and `api/resources/runtimes/builtin.json` (`runtimes:bundle`).
+
+## The language bot
+
+Two workflows keep the images on their upstream releases, and test a release before it is
+published.
+
+**Language releases** (`lang-releases.yml`, Mondays 00:47 UTC and by hand) runs `ci.sh watch`
+(`lib/watch.sh`) and files an issue per finding, once per title:
+
+| Title | When |
+|-------|------|
+| `lang: <runtime> <X.Y.Z> released` | python, nodejs, go, php: a new patch release of a published version, or a new version not published yet (Node.js: the newest minor of an even major), from Docker Hub's tags of the base image |
+| `lang: <runtime> <X.Y> end of life <date>` | a published version past its end of life or within 60 days of it (endoflife.date). For people: the weekly build stops building it by itself once the date is past |
+| `lang: pytorch\|tensorflow <X.Y.Z> released` | a framework release on PyPI newer than its pin |
+| `lang: <tool> <version> released` | a toolchain of the WebAssembly images newer than its `ARG` (spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk, rust) |
+
+**Language tests** (`lang-test.yml`, after every run of Language releases and by hand: **Actions →
+Language tests → Run workflow**, or `gh workflow run lang-test.yml -f issue=31`) tests every open
+`released` issue that has no label yet. Of several issues of one image it tests the newest
+release and closes the older ones as superseded.
+
+- **A language version.** The base images are mirrored first, then `exec-<runtime>:<X.Y>` is built
+  for it and smoke-tested (`ci.sh build <runtime> --version=X.Y`), and this repository's tests run.
+  The image is pushed as `ghcr.io/brf-tech/runr/candidates/exec-<runtime>:<X.Y.Z>`, a package
+  RunR never discovers by itself. RunR's main e2e (`runtime/ci.sh test` of its last release, on
+  Kind) then runs with that image as the only version of that runtime, and its xaas and faas cases
+  deploy functions on it (`ci/lang-bot.sh catalog`, `check-e2e`).
+- **An ML framework.** The pin moves (torch with the torchvision release that requires it, or
+  tensorflow's CPU and CUDA pins), the CPU image is built and smoke-tested, and this repository's
+  tests run. RunR's e2e has no case of the ML runtimes.
+- **A WebAssembly toolchain** gets the label `needs attention` at once: a person moves it (the Spin
+  CLI must match the Spin runtime of RunR's shim, the others need new checksums or mirrored bases).
+- **Green:** the bot commits on `main` as a fast-forward (`git push origin HEAD:refs/heads/main`,
+  never forced), as `RunR deps bot <deps-bot@runr.sh>`. A language version goes into
+  `runtimes/<runtime>/tested-versions`; an ML framework's commit is its pin. The bot starts the
+  publish workflow for that image (a push of the workflow's token starts no workflow), and closes
+  the issue with the label `lang: passed`. The comment also says what RunR's `next` pins of that
+  runtime: it is read with RunR's deploy key, never written. The language runtimes pin nothing
+  there (RunR finds their versions in the registry), so nothing moves in RunR. When `main`
+  changed the runtime's directory after the tested commit, nothing is committed, and the next run
+  tests it again.
+- **Red:** the label `needs attention` and a comment with what failed. Nothing is committed, and
+  the weekly publish holds the version. Run the workflow with the issue's number to test it again
+  (it takes the label off), or wait for a newer release to supersede the issue.
+
+**The gate.** The publish workflow sets `LANG_GATE=1`. A routine build of an upstream version
+other than the one a tag already runs is pushed only when `runtimes/<runtime>/tested-versions`
+lists it (`<X.Y> <X.Y.Z>`). Until then it is held: nothing is pushed, the published patch stays,
+and the run says "held". A rebuild of the version a tag runs (a base image refresh, a runtime
+update) is never held, nor a patch of the patch workflow (a person's decision, a zero-day).
+
+What the workflows need besides their `GITHUB_TOKEN`:
+
+- **Language releases:** `issues: write`.
+- **Language tests:**
+  - `issues: write`;
+  - `packages: write` (the base images mirrored, the candidate pushed);
+  - in its landing job alone, `contents: write` and `actions: write` (the publish workflow);
+  - the secret `GITLAB_RUNR_PUSH_KEY` (the private key of RunR's deploy key on GitLab) and the
+    variable `GITLAB_KNOWN_HOSTS` (GitLab's host key line). `ci/lang-ssh-key.sh` takes only
+    gitlab.com's published host key (`SHA256:eUXGGm1YGsMAS7vkcx6JOJdOGHPem5gQp4taiCfCLB8`, pinned
+    in the script), writes both to 0600 files for the one step that reads RunR's `next`, and a
+    step that always runs removes them.
+
+`test/workflows_test.sh` keeps all of this: no other push, refspec or force, the deploy key in
+one step only.
 
 ## Patches and the patch feed
 

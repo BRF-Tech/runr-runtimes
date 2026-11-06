@@ -46,6 +46,10 @@ Some rules:
   [README.md](README.md#a-new-runtime-without-a-runr-release).
 - **A new version.** When installs should get the change as a new version, raise the version with
   it: the wrapper's `const version`, hf-serve's `__version__`, or a WebAssembly runtime's `version`.
+- **A new upstream release** of a language (a patch release, a new version) is published only after
+  the language bot tested it: it lists it in `runtimes/<runtime>/tested-versions`. Leave that file to
+  the bot ([README.md](README.md#the-language-bot)); a person's urgent patch goes through the patch
+  workflow, which the gate never holds.
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/), for example
 `fix(python): …`, `feat(wrapper): …` or `ci: …`.
