@@ -270,12 +270,13 @@ jobs:
           sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
           sudo tar -xzf /tmp/cpk.tar.gz -C /usr/local/bin cloud-provider-kind
           sudo tar -xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm
-      # RunR's main e2e: its xaas and faas cases deploy functions of this runtime on the candidate
+      # RunR's main e2e: its xaas and faas cases deploy functions of this runtime on the candidate.
+      # The sandbox cases are left out: they run RunR's sandbox image, not the candidate
       - name: RunR's e2e (runtime/ci.sh test)
         working-directory: runr
         run: |
           set -o pipefail
-          bash runtime/ci.sh test 2>&1 | tee -a "$RUNNER_TEMP/e2e.log"
+          bash runtime/ci.sh test --skip-sandbox 2>&1 | tee -a "$RUNNER_TEMP/e2e.log"
           shopt -s nullglob
           for f in api/storage/e2e-results-*.md; do
             cat "$f" >> "$GITHUB_STEP_SUMMARY"

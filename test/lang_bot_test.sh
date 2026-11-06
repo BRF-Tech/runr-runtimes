@@ -105,6 +105,10 @@ bash "$bot" catalog "$runr" python 3.16 ghcr.io/brf-tech/runr/candidates/exec-py
   || fail "the catalog: $(jq -c .runtimes.python "$runr/api/resources/runtimes/builtin.json")"
 jq -e '.runtimes.nodejs.versionDiscovery' "$runr/api/resources/runtimes/builtin.json" >/dev/null || fail "another runtime changed"
 grep -qxF 'EXECUTOR_RUNTIMES=python' "$runr/api/.env.docker" || fail "EXECUTOR_RUNTIMES: $(cat "$runr/api/.env.docker")"
+cp "$runr/api/resources/runtimes/builtin.json" "$tmp/builtin.json"
+bash "$bot" catalog "$runr" nodejs 24.23 ghcr.io/brf-tech/runr/candidates/exec-nodejs:24.23.0 || fail "catalog nodejs"
+grep -qxF 'EXECUTOR_RUNTIMES=python,nodejs' "$runr/api/.env.docker" || fail "another runtime keeps Python for the rt-* cases: $(cat "$runr/api/.env.docker")"
+cp "$tmp/builtin.json" "$runr/api/resources/runtimes/builtin.json"
 bash "$bot" catalog "$runr" ruby 3.4 x 2>/dev/null && fail "a runtime the catalog does not have"
 cat > "$tmp/results.md" <<'EOF'
 ## Results

@@ -18,9 +18,10 @@
 #   ci/lang-bot.sh tested RUNTIME VERSION FULL
 #       "VERSION FULL" into runtimes/RUNTIME/tested-versions (the publish gate, lib/patch.sh)
 #   ci/lang-bot.sh catalog RUNR RUNTIME VERSION IMAGE
-#       a checkout of BRF-Tech/runr (RUNR) offers RUNTIME only, at VERSION alone with IMAGE (its
-#       built-in catalog api/resources/runtimes/builtin.json and EXECUTOR_RUNTIMES of
-#       api/.env.docker): RunR's main e2e then deploys its functions on the candidate image
+#       a checkout of BRF-Tech/runr (RUNR) offers RUNTIME at VERSION alone, with IMAGE (its
+#       built-in catalog api/resources/runtimes/builtin.json), and no other runtime but Python
+#       (EXECUTOR_RUNTIMES of api/.env.docker): RunR's main e2e then deploys its functions on the
+#       candidate image
 #   ci/lang-bot.sh check-e2e RESULTS.md RUNTIME VERSION
 #       the e2e's results show the xaas cases of RUNTIME at VERSION, and none of them failed
 #   ci/lang-bot.sh runr-pins RUNR RUNTIME
@@ -190,11 +191,15 @@ cmd_catalog() {
       end)' "$catalog" > "$out"
   cat "$out" > "$catalog"
   rm -f -- "$out"
-  # only this runtime is offered: the e2e's xaas and faas cases run on it alone
+  # the runtimes offered: this one, and Python, which the e2e's runtime plugin cases (rt-*) run
+  # on: the xaas and faas cases run on the candidate and, for another runtime, on the published
+  # Python
+  local offered="python"
+  [ "$runtime" = python ] || offered="python,${runtime}"
   if grep -q '^EXECUTOR_RUNTIMES=' "$env" 2>/dev/null; then
-    sed -i "s/^EXECUTOR_RUNTIMES=.*/EXECUTOR_RUNTIMES=${runtime}/" "$env"
+    sed -i "s/^EXECUTOR_RUNTIMES=.*/EXECUTOR_RUNTIMES=${offered}/" "$env"
   else
-    echo "EXECUTOR_RUNTIMES=${runtime}" >> "$env"
+    echo "EXECUTOR_RUNTIMES=${offered}" >> "$env"
   fi
 }
 
