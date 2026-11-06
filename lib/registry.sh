@@ -137,6 +137,31 @@ registry_blob() {
   fi
 }
 
+# registry_artifact REPOSITORY TAG MEDIA_TYPE OUT — the single MEDIA_TYPE layer of the OCI artifact
+# REPOSITORY:TAG (an image manifest as oras pushes it: the patch feed, the runtime catalog) into OUT,
+# checked against its digest; prints the digest of the artifact's manifest. Exit 3: no artifact (or
+# not readable without credentials: GHCR answers the same for a missing and a private package),
+# 1: any other failure.
+registry_artifact() {
+  local repository="$1" tag="$2" media_type="$3" out="$4" manifest digest layer rc=0
+  manifest=$(mktemp)
+  digest=$(registry_manifest "${repository}:${tag}" "$manifest") || rc=$?
+  case "$rc" in
+    0) ;;
+    3|4) rm -f -- "$manifest"; return 3 ;;
+    *) rm -f -- "$manifest"; return 1 ;;
+  esac
+  layer=$(jq -r --arg mt "$media_type" \
+    '[.layers[]? | select(.mediaType == $mt)] | if length == 1 then .[0].digest else empty end' "$manifest" 2>/dev/null || true)
+  rm -f -- "$manifest"
+  if [ -z "$layer" ]; then
+    echo -e "  ${RED}${repository}:${tag} is not a ${media_type} artifact (no single layer of it)${NC}" >&2
+    return 1
+  fi
+  registry_blob "$repository" "$layer" "$out" || return 1
+  echo "$digest"
+}
+
 # registry_tags_checked REPOSITORY — every tag of REPOSITORY (host/path), one per line, like
 # registry_tags but certain: no tag for a repository that does not exist (HTTP 404), a failure for
 # any page that cannot be read (a tag a caller does not see could be overwritten)

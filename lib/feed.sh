@@ -94,7 +94,7 @@ feed_tools() {
 # cannot express (lib/feed.jq feed_problems). Exit 2 without a schema validator (the rules are
 # still checked).
 feed_validate() {
-  local file="$1" problems validator rc=0
+  local file="$1" problems schema_rc=0 rc=0
   if ! problems=$(patch_jq -r --argjson keep "$PATCH_KEEP" --argjson pkeep "$PATCH_FEED_PLATFORM_KEEP" \
     'include "feed"; feed_problems($keep; $pkeep)[]' "$file" 2>&1); then
     echo -e "  ${RED}${file}: not a feed: ${problems}${NC}"
@@ -104,12 +104,27 @@ feed_validate() {
     printf "  ${RED}%s${NC}\n" "$problems"
     rc=1
   fi
-  validator="$(feed_schema_validator)"
-  case "$validator" in
+  json_schema_check "${SCRIPT_DIR}/schema/patch-feed.v1.json" "$file" || schema_rc=$?
+  case "$schema_rc" in
+    0) ;;
+    2)
+      echo -e "  ${YELLOW}no JSON Schema validator (pip install check-jsonschema): only the feed's rules were checked${NC}"
+      [ "$rc" = 0 ] && rc=2 ;;
+    *) rc=1 ;;
+  esac
+  return "$rc"
+}
+
+# json_schema_check SCHEMA FILE — FILE against the JSON Schema SCHEMA, with the validator
+# feed_schema_validator finds (the patch feed, the runtime catalog). Exit 1: not valid, 2: no
+# validator.
+json_schema_check() {
+  local schema="$1" file="$2"
+  case "$(feed_schema_validator)" in
     check-jsonschema)
-      check-jsonschema --schemafile "${SCRIPT_DIR}/schema/patch-feed.v1.json" "$file" || rc=1 ;;
+      check-jsonschema --schemafile "$schema" "$file" || return 1 ;;
     python3)
-      python3 - "${SCRIPT_DIR}/schema/patch-feed.v1.json" "$file" <<'PY' || rc=1
+      python3 - "$schema" "$file" <<'PY' || return 1
 import json
 import sys
 
@@ -126,33 +141,20 @@ for error in errors:
 sys.exit(1 if errors else 0)
 PY
       ;;
-    *)
-      echo -e "  ${YELLOW}no JSON Schema validator (pip install check-jsonschema): only the feed's rules were checked${NC}"
-      [ "$rc" = 0 ] && rc=2 ;;
+    *) return 2 ;;
   esac
-  return "$rc"
 }
 
 # feed_pull OUT — the current feed into OUT; FEED_DIGEST: the digest of its manifest. Exit 3: no
 # feed (or not readable without credentials: GHCR answers the same for a missing and a private
 # package), 1: any other failure.
 feed_pull() {
-  local out="$1" manifest rc=0 layer
-  manifest=$(mktemp)
-  FEED_DIGEST=$(registry_manifest "$(feed_repository):${PATCH_FEED_TAG}" "$manifest") || rc=$?
-  case "$rc" in
-    0) ;;
-    3|4) rm -f -- "$manifest"; FEED_DIGEST=""; return 3 ;;
-    *) rm -f -- "$manifest"; FEED_DIGEST=""; return 1 ;;
-  esac
-  layer=$(jq -r --arg mt "$PATCH_FEED_MEDIA_TYPE" \
-    '[.layers[]? | select(.mediaType == $mt)] | if length == 1 then .[0].digest else empty end' "$manifest" 2>/dev/null || true)
-  rm -f -- "$manifest"
-  if [ -z "$layer" ]; then
-    echo -e "  ${RED}$(feed_repository):${PATCH_FEED_TAG} is not a patch feed (no single ${PATCH_FEED_MEDIA_TYPE} layer)${NC}" >&2
-    return 1
+  local out="$1" rc=0
+  FEED_DIGEST=$(registry_artifact "$(feed_repository)" "$PATCH_FEED_TAG" "$PATCH_FEED_MEDIA_TYPE" "$out") || rc=$?
+  if [ "$rc" != 0 ]; then
+    FEED_DIGEST=""
+    return "$rc"
   fi
-  registry_blob "$(feed_repository)" "$layer" "$out" || return 1
   if ! jq -e '.schema == 1' "$out" >/dev/null 2>&1; then
     echo -e "  ${RED}$(feed_repository):${PATCH_FEED_TAG} is not a schema 1 feed${NC}" >&2
     return 1
