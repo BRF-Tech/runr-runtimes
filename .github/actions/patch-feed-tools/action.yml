@@ -1,8 +1,10 @@
-# The tools of `ci.sh feed … --push` (lib/feed.sh): oras pushes the patch feed, cosign signs and
-# verifies it, check-jsonschema validates it against schema/patch-feed.v1.json. Pinned, the
-# binaries checked against their release checksums.
+# The tools of `ci.sh feed … --push` (lib/feed.sh) and `ci.sh catalog publish --push`
+# (lib/catalog.sh): oras pushes the patch feed and the runtime catalog, cosign signs and verifies
+# them, check-jsonschema validates them against schema/patch-feed.v1.json and
+# schema/runtime-catalog.v1.json, PyYAML reads the runtime manifests the catalog is built from.
+# Pinned, the binaries checked against their release checksums.
 name: Patch feed tools
-description: oras, cosign and check-jsonschema for ci.sh feed
+description: oras, cosign, check-jsonschema and PyYAML for ci.sh feed and ci.sh catalog
 
 runs:
   using: composite
@@ -26,6 +28,6 @@ runs:
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: '3.12'
-    - name: Install check-jsonschema
+    - name: Install check-jsonschema and PyYAML
       shell: bash
-      run: pip install check-jsonschema==0.38.2
+      run: pip install check-jsonschema==0.38.2 PyYAML==6.0.3

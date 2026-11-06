@@ -12,6 +12,8 @@
 # differs from its published image gets the immutable tag <full version>-r<n> next to <major.minor>;
 # an unchanged one publishes nothing. The feed job then adds them to the signed patch feed and
 # deletes patch tags beyond the newest five per version (ci.sh feed update --push).
+# On a push and by hand, the catalog job then publishes the signed runtime catalog when the
+# manifests of runtimes/ changed (ci.sh catalog publish --push).
 name: Publish images
 
 on:
@@ -192,3 +194,37 @@ jobs:
           RUNR_PATCH_FEED_COSIGN_KEY: ${{ secrets.RUNR_PATCH_FEED_COSIGN_KEY }}
           RUNR_PATCH_FEED_COSIGN_PASSWORD: ${{ secrets.RUNR_PATCH_FEED_COSIGN_PASSWORD }}
         run: ./ci.sh feed update --push
+
+  # The runtime catalog: the manifests of runtimes/*/runtime.yaml as one signed document that RunR
+  # installations read (ghcr.io/brf-tech/runr/runtime-catalog:stable), so a new or changed runtime
+  # reaches them without a RunR release. After the image jobs, and only when none of them failed:
+  # the images a new runtime names exist before the catalog names them. Published only when its
+  # runtimes changed; signed with the patch feed's key (lib/catalog.sh). Not on the weekly
+  # schedule: the manifests change only with a commit.
+  catalog:
+    name: Runtime catalog
+    needs: [select, bases, publish]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: runtime-catalog
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/patch-feed-tools
+      - name: ci.sh catalog publish --push (sign, publish when changed)
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUNR_PATCH_FEED_COSIGN_KEY: ${{ secrets.RUNR_PATCH_FEED_COSIGN_KEY }}
+          RUNR_PATCH_FEED_COSIGN_PASSWORD: ${{ secrets.RUNR_PATCH_FEED_COSIGN_PASSWORD }}
+        run: ./ci.sh catalog publish --push

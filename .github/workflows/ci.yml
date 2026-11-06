@@ -1,6 +1,7 @@
 # Pull requests (and pushes to branches other than main): lint, the shell tests, the Dockerfile
 # and reqs-mirror checks, the wrapper's Go tests, hf-serve's Python tests, the catalog manifests
-# against RunR's runtime schema, the patch feed's schema and example, and a local build + smoke
+# against RunR's runtime schema, the runtime catalog built from them and checked against its
+# schema, the patch feed's schema and example, and a local build + smoke
 # test (no push) of every CPU image the change touches (ci/images.sh). The GPU images are built by
 # the heavy-images workflow, which runs on any branch by hand.
 name: CI
@@ -59,14 +60,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # the patch feed's tests validate feeds against its JSON Schema
+      # the patch feed's and the runtime catalog's tests validate them against their JSON Schemas;
+      # the catalog is built from the YAML manifests with PyYAML
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - run: pip install check-jsonschema==0.38.2
+      - run: pip install check-jsonschema==0.38.2 PyYAML==6.0.3
       # ci.sh without Docker or a registry: build/push/smoke flow, smoke tests, the mirror's Docker
       # Hub fallback, the EOL report, the image selection of the workflows, the catalog manifests,
-      # patches and the patch feed
+      # the runtime catalog, patches and the patch feed
       - run: for t in test/*_test.sh; do echo "── $t"; bash "$t"; done
       # The patch feed's schema is a JSON Schema, the example feed valid against it
       - run: check-jsonschema --check-metaschema schema/patch-feed.v1.json
@@ -107,20 +109,27 @@ jobs:
       - run: python -m pytest -q tests
 
   catalog:
-    name: Catalog manifests (RunR runtime schema)
+    name: Catalog manifests (RunR runtime schema) + runtime catalog
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - run: pip install check-jsonschema==0.38.2
+      - run: pip install check-jsonschema==0.38.2 PyYAML==6.0.3
       # The schema of BRF-Tech/runr's main branch, the API that bundles these manifests
-      # (api/resources/runtimes/builtin.json); the API validates them further when it bundles them
+      # (api/resources/runtimes/builtin.json) and reads them from the runtime catalog; the API
+      # validates them further when it reads them
       - run: >
           check-jsonschema
           --schemafile https://raw.githubusercontent.com/BRF-Tech/runr/main/api/resources/runtimes/runtime.schema.json
           runtimes/*/runtime.yaml
+      # The runtime catalog the publish workflow would publish (runtime-catalog:stable): built
+      # from the manifests, checked against schema/runtime-catalog.v1.json and its rules; the
+      # schema is a JSON Schema, the example valid against it
+      - run: check-jsonschema --check-metaschema schema/runtime-catalog.v1.json
+      - run: ./ci.sh catalog build --out "${RUNNER_TEMP}/runtime-catalog.json"
+      - run: ./ci.sh catalog validate "${RUNNER_TEMP}/runtime-catalog.json" schema/runtime-catalog.example.json
 
   select:
     name: Images the change touches
