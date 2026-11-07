@@ -88,7 +88,7 @@ and RunR's guide [docs/executor-development.md](https://github.com/BRF-Tech/runr
 | `hf-serve/` | hf-serve (Python), its CPU and CUDA Dockerfiles and its tests |
 | `ci.sh`, `lib/` | Build, smoke-test, push, patch, patch feed, runtime catalog, mirror and EOL commands |
 | `test/` | Shell tests of `ci.sh`, run without Docker or a registry |
-| `ci/` | `check-dockerfiles.sh`, `check-reqs-mirror.sh`, `images.sh` (the image selection of the workflows), `lang-bot.sh` and `lang-ssh-key.sh` (the language bot) |
+| `ci/` | `check-dockerfiles.sh`, `check-reqs-mirror.sh`, `images.sh` (the image selection of the workflows), `lang-bot.sh` (the language bot) |
 | `schema/` | The JSON Schemas of the patch feed (`patch-feed.v1.json`) and the runtime catalog (`runtime-catalog.v1.json`), an example of each |
 | `keys/` | `patch-feed.pub`, the public key of the signatures of the patch feed and the runtime catalog |
 | `.github/workflows/` | CI, publish, patch, platform release, heavy GPU images, reqs mirror |
@@ -215,21 +215,36 @@ release and closes the older ones as superseded.
   Kind) then runs with that image as the only version of that runtime, and its xaas and faas cases
   deploy functions on it (`ci/lang-bot.sh catalog`, `check-e2e`).
 - **An ML framework.** The pin moves (torch with the torchvision release that requires it, or
-  tensorflow's CPU and CUDA pins), the CPU image is built and smoke-tested, and this repository's
-  tests run. RunR's e2e has no case of the ML runtimes.
-- **A WebAssembly toolchain** gets the label `needs attention` at once: a person moves it (the Spin
-  CLI must match the Spin runtime of RunR's shim, the others need new checksums or mirrored bases).
+  tensorflow's CPU and CUDA pins), the CPU image is built and smoke-tested, this repository's
+  tests run, and the image is pushed as `candidates/exec-<runtime>:<X.Y.Z>`. RunR's main e2e then
+  runs with it as the only version of that runtime and its ML case (`test:e2e --ml`): one HTTP
+  function that does a matrix product with the framework and fails on a wrong result. The CPU
+  images fit a standard runner (compressed, measured on GHCR on 2026-11-07: `exec-pytorch:2.14`
+  410 MiB, `exec-tensorflow:2.21` 495 MiB). RunR releases up to 0.6.7 have no ML case: until
+  RunR's next release, the bot reports the suite as skipped and the build and smoke test decide.
+  The `-gpu` images are not tested here: the heavy-images workflow builds them.
+- **A WebAssembly toolchain** (`ci/lang-bot.sh wasm-bump`). Its `ARG` moves in every
+  `runtimes/wasm-*/Dockerfile` that has it, with the SHA256 of its downloads (Spin, wasi-sdk and
+  wasm-tools: the release assets; zig: ziglang.org's index), and the base image of the reqs mirror
+  follows for tinygo and rust (`REQS_IMAGES` of `lib/mirror.sh`, mirrored before the build). The
+  images that have it are built and smoke-tested (`ci.sh wasm`), this repository's tests run, and
+  they are pushed as `candidates/exec-wasm-<lang>:<version>-<tool>-<release>`. RunR's suites that
+  deploy them then run with those images under their published names (`RUNTIME_IMAGES_LOCAL=1`):
+  `ci.sh test-wasm` (the Rust and JavaScript examples) for spin and rust, `ci.sh test-images`
+  (wasm-exec's C and Q cases) for spin, tinygo, wasi-sdk, wasm-tools and zig. For Spin they also
+  show whether RunR's Spin shim runs what the new Spin CLI builds. RunR's e2e has no case of
+  wasm-go and wasm-python: for componentize-py and spin-sdk, and for wasm-go's TinyGo, the smoke
+  test decides. The images keep their version, so RunR moves nothing.
 - **Green:** the bot commits on `main` as a fast-forward (`git push origin HEAD:refs/heads/main`,
   never forced), as `RunR deps bot <deps-bot@runr.sh>`. A language version goes into
-  `runtimes/<runtime>/tested-versions`; an ML framework's commit is its pin. The bot starts the
-  publish workflow for that image (a push of the workflow's token starts no workflow), and closes
-  the issue with the label `lang: passed`. The comment also says what RunR's `next` pins of that
-  runtime: it is read with RunR's deploy key, never written. The language runtimes pin nothing
-  there (RunR finds their versions in the registry), so nothing moves in RunR. When `main`
-  changed the runtime's directory after the tested commit, nothing is committed, and the next run
-  tests it again.
-- **Red:** the label `needs attention` and a comment with what failed. Nothing is committed, and
-  the weekly publish holds the version. Run the workflow with the issue's number to test it again
+  `runtimes/<runtime>/tested-versions`; an ML framework's or a toolchain's commit is its pin. The
+  bot starts the publish workflow for those images (a push of the workflow's token starts no
+  workflow), and closes the issue with the label `lang: passed`. The comment also says what RunR's
+  last release pins of that runtime. The language runtimes pin nothing there (RunR finds their
+  versions in the registry), so nothing moves in RunR. When `main` changed the images' directories
+  after the tested commit, nothing is committed, and the next run tests it again.
+- **Red:** the label `needs attention` and a comment with what failed. Nothing is committed: the
+  weekly publish holds a language version, and an ML or toolchain pin stays where it was. Run the workflow with the issue's number to test it again
   (it takes the label off), or wait for a newer release to supersede the issue.
 
 **The gate.** The publish workflow sets `LANG_GATE=1`. A routine build of an upstream version
@@ -243,16 +258,12 @@ What the workflows need besides their `GITHUB_TOKEN`:
 - **Language releases:** `issues: write`.
 - **Language tests:**
   - `issues: write`;
-  - `packages: write` (the base images mirrored, the candidate pushed);
-  - in its landing job alone, `contents: write` and `actions: write` (the publish workflow);
-  - the secret `GITLAB_RUNR_PUSH_KEY` (the private key of RunR's deploy key on GitLab) and the
-    variable `GITLAB_KNOWN_HOSTS` (GitLab's host key line). `ci/lang-ssh-key.sh` takes only
-    gitlab.com's published host key (`SHA256:eUXGGm1YGsMAS7vkcx6JOJdOGHPem5gQp4taiCfCLB8`, pinned
-    in the script), writes both to 0600 files for the one step that reads RunR's `next`, and a
-    step that always runs removes them.
+  - `packages: write` (the base images mirrored, the candidates pushed);
+  - in its landing job alone, `contents: write` and `actions: write` (the publish workflow).
 
-`test/workflows_test.sh` keeps all of this: no other push, refspec or force, the deploy key in
-one step only.
+The bot takes RunR from its public repository, at its last release (`gh release view`): nothing of
+RunR's private development repository, no deploy key. `test/workflows_test.sh` keeps all of this:
+no other push, refspec or force, no secret but the `GITHUB_TOKEN`, RunR at its last release only.
 
 ## Patches and the patch feed
 

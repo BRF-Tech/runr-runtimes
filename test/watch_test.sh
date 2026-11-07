@@ -92,16 +92,18 @@ grep -qF 'not published yet' "$reports/python-3.16.0.md" || fail "the new versio
 grep -qF 'reached its end of life on 2026-10-31' "$reports/python-3.10-eol.md" || fail "a past end of life"
 grep -qF 'in 54 days' "$reports/php-8.3-eol.md" || fail "a near end of life: $(cat "$reports/php-8.3-eol.md")"
 grep -qF 'a new tag `exec-pytorch:2.15`' "$reports/pytorch-2.15.0.md" || fail "a new ML tag: $(cat "$reports/pytorch-2.15.0.md")"
-grep -qF 'the shim moves first' "$reports/tinygo-0.43.0.md" && fail "tinygo is no Spin"
+grep -qF "whether RunR's Spin shim runs" "$reports/tinygo-0.43.0.md" && fail "tinygo is no Spin"
+grep -qF 'and the mirrored base image' "$reports/tinygo-0.43.0.md" || fail "tinygo's base image: $(cat "$reports/tinygo-0.43.0.md")"
+grep -qF "RunR's ML e2e case" "$reports/pytorch-2.15.0.md" || fail "the ML test: $(cat "$reports/pytorch-2.15.0.md")"
 grep -qF '✓ 1.25: publishes 1.25.4' "$tmp/out" || fail "go follows its upstream: $(cat "$tmp/out")"
 grep -qF 'nodejs 25' "$tmp/out" && fail "an odd Node.js major"
 echo "ok - findings: a patch release, a new version, end of life past and near, a framework release, WebAssembly toolchains; no odd Node.js major, pre-release, version below the minimum or end-of-life version"
 
-# Spin's finding says the shim moves first
+# Spin's finding says RunR's suites check its shim
 fx https://api.github.com/repos/spinframework/spin/releases/latest '{"tag_name": "v4.2.0"}'
 rm -rf "$reports"
 cmd_watch --report="$reports" > "$tmp/out" 2>&1 || fail "watch with spin: $(cat "$tmp/out")"
-grep -qF 'the shim moves first' "$reports/spin-4.2.0.md" || fail "spin: $(cat "$reports/spin-4.2.0.md")"
+grep -qF "whether RunR's Spin shim runs what the new Spin CLI builds" "$reports/spin-4.2.0.md" || fail "spin: $(cat "$reports/spin-4.2.0.md")"
 
 # an upstream that does not answer fails the watch, the others are still checked
 rm -f "$WATCH_FIXTURES/published-exec-go" "${WATCH_FIXTURES}/https___pypi.org_pypi_torch_json"

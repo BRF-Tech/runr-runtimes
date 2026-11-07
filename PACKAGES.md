@@ -36,10 +36,13 @@ show it private, set it to public there.
 | `runr/wrapper` | `ghcr.io/brf-tech/runr/wrapper` | publish |
 | `runr/hf-serve` | `ghcr.io/brf-tech/runr/hf-serve` | publish (CPU), heavy (`-cuda`) |
 
-The language bot (`lang-test.yml`) pushes the image it tests as
-`ghcr.io/brf-tech/runr/candidates/exec-<runtime>:<full version>` (packages `runr/candidates/exec-python`,
-`-nodejs`, `-go`, `-php`, created by the workflow on its first test of each runtime, public like
-this repository). RunR's e2e pulls it from there; RunR never discovers versions in that namespace.
+The language bot (`lang-test.yml`) pushes the images it tests under `ghcr.io/brf-tech/runr/candidates/`:
+`exec-<runtime>:<full version>` for a language or an ML framework (packages
+`runr/candidates/exec-python`, `-nodejs`, `-go`, `-php`, `-pytorch`, `-tensorflow`), and
+`exec-wasm-<lang>:<version>-<tool>-<release>` for a WebAssembly toolchain (`runr/candidates/exec-wasm-exec`,
+`-wasm-go`, `-wasm-js`, `-wasm-python`, `-wasm-rust`). The workflow creates each package on its
+first test, public like this repository. RunR's e2e pulls them from there; RunR never discovers
+versions in that namespace.
 Its tags are test artifacts: they may be deleted at any time.
 
 `ci.sh eol --prune` deletes end-of-life `exec-*` versions through the GitHub Packages API. It needs

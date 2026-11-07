@@ -47,6 +47,19 @@ watch_get() {
   fi
 }
 
+# watch_sha256 URL — the SHA256 of a download (or of its fixture)
+watch_sha256() {
+  local sum
+  if [ -n "${WATCH_FIXTURES:-}" ]; then
+    local file="${WATCH_FIXTURES}/${1//[^A-Za-z0-9._-]/_}"
+    [ -f "$file" ] || return 1
+    sum="$(sha256sum "$file")"
+  else
+    sum="$(curl -fsSL "$1" | sha256sum)" || return 1
+  fi
+  echo "${sum%% *}"
+}
+
 # watch_hub_tags REPO — the tags of a Docker Hub repository (library/python), one per line: the
 # newest WATCH_HUB_PAGES pages of 100 (default 10, as fetch_tags reads them; Docker Hub lists the
 # tags updated last first and refuses many pages in a row). A page after the first that does not
@@ -201,7 +214,7 @@ watch_ml() {
     watch_report "${runtime}-${latest}" "lang: ${runtime} ${latest} released" \
 "A new release of ${pkg}: **${latest}** (PyPI). \`runtimes/${runtime}/${file}\` pins ${pin}: \`exec-${runtime}:${pin%.*}\`$([ "${latest%.*}" != "${pin%.*}" ] && echo ", a new tag \`exec-${runtime}:${latest%.*}\`").
 
-The language bot (lang-test.yml) moves the pin, builds and smoke-tests the CPU image and, on success, commits the pin: the publish workflow publishes the CPU image, the heavy-images workflow the GPU one.
+The language bot (lang-test.yml) moves the pin, builds and smoke-tests the CPU image, runs RunR's ML e2e case on it (a function doing a tensor operation, once RunR's release has the case) and, on success, commits the pin: the publish workflow publishes the CPU image, the heavy-images workflow the GPU one.
 
 Reported by ci.sh watch."
   done
@@ -248,7 +261,7 @@ watch_wasm() {
     watch_report "${tool}-${latest}" "lang: ${tool} ${latest} released" \
 "A new release of ${tool}: **${latest}** (${source}). The WebAssembly images pin \`ARG ${arg}=${pin}\` (\`runtimes/wasm-*/Dockerfile\`).
 
-A person moves it: $([ "$tool" = spin ] && echo "the images carry the Spin CLI of the Spin runtime RunR's shim embeds (BRF-Tech/runr \`runtime/wasm-shim-spin\`), so the shim moves first; then" || echo "a toolchain change needs the new download checksums (and a mirrored base image for rust and tinygo); then") raise the runtimes' \`version\` when installs should get it as a new version, and RunR's \`WASM_RUNTIME_VERSION\` and \`builtin.json\` follow (README.md, How CI publishes). The language bot labels this issue \`needs attention\`.
+The language bot (lang-test.yml) moves the ARG with its download checksums$([ "$tool" = rust ] || [ "$tool" = tinygo ] && echo " and the mirrored base image"), builds and smoke-tests the images that have it, and runs RunR's e2e suites that deploy them$([ "$tool" = spin ] && echo " (they also show whether RunR's Spin shim runs what the new Spin CLI builds)"). On success it commits the change: the publish workflow then publishes the images under their version, as before.
 
 Reported by ci.sh watch."
   done
