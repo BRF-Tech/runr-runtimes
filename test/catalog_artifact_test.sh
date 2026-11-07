@@ -77,6 +77,8 @@ jq -e '[.runtimes[] | select(has("files"))] | length == 0' "$tmp/real.json" >/de
 # the quoted version stays a string, numbers and booleans stay what they are
 [ "$(jq -c '.runtimes[] | select(.manifest.id == "wasm-go") | [.manifest.versions[0].version, .manifest.versions[0].default, .manifest.resources.memory_mb, .manifest.resources.cpu]' "$tmp/real.json")" \
   = '["4.1",true,128,"100m"]' ] || fail "wasm-go: the types of version, default, memory_mb, cpu"
+# Java's default size of new projects (its cold start)
+[ "$(jq -c '.runtimes[] | select(.manifest.id == "java") | .manifest.resources' "$tmp/real.json")" = '{"cpu":"500m","memory_mb":512}' ]   || fail "java: its default resources: $(jq -c '.runtimes[] | select(.manifest.id == "java") | .manifest.resources' "$tmp/real.json")"
 # the manifest is the YAML, nothing added
 [ "$(jq -c '.runtimes[0].manifest | keys_unsorted' "$tmp/real.json")" \
   = '["apiVersion","kind","id","name","description","language","extensions","category","versionDiscovery","handler","template","dependencies","run","triggers","sandbox"]' ] \

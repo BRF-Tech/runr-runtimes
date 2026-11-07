@@ -56,3 +56,8 @@ run:
   command: ["/opt/runr/bin/runr-start"]
 triggers: [http, schedule, queue]
 sandbox: [runc, gvisor, kata]
+# New projects get 500m and 512 MiB: Java cold-starts in about 1.7 s at 250m / 256 MiB, 2.4 times
+# Python. An explicit size on the project wins (RunR's manifest reference, resources).
+resources:
+  cpu: "500m"
+  memory_mb: 512
