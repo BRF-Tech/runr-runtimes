@@ -1,0 +1,38 @@
+# Built-in runtime: TypeScript on Bun. server.ts serves the RunR HTTP contract and runs a scheduled
+# invocation once (RUNR_MODE=schedule); Bun runs the TypeScript (and JavaScript) handler directly,
+# types stripped, not checked. A package.json triggers a dependency build (runr-install).
+apiVersion: runr.sh/v1
+kind: Runtime
+id: bun
+name: TypeScript (Bun)
+description: TypeScript and JavaScript on Bun with the RunR handler server — export async function handler(event, context).
+language: typescript
+extensions: [ts, tsx, js, mjs]
+category: general
+versionDiscovery:
+  repository: ghcr.io/brf-tech/runr/exec-bun
+  image: "ghcr.io/brf-tech/runr/exec-bun:{version}"
+  eol: bun
+handler:
+  file: main
+  function: handler
+  pattern: '(?:export\s+(?:default\s+)?(?:async\s+)?function\s*\*?\s*{handler}\b|export\s+(?:const|let|var)\s+{handler}\b|export\s*\{[^}]*\b{handler}\b|exports\.{handler}\b)'
+template:
+  files:
+    "{file}": |-
+      type Context = { method: string; path: string; headers: Record<string, string> };
+
+      export async function {handler}(event: any, context: Context) {
+        return { statusCode: 200, body: 'Hello, World!' };
+      }
+dependencies:
+  file: package.json
+  template: '{"dependencies":{"ioredis":"^6"}}'
+  install: /opt/runr/bin/runr-install /build/code /build/deps
+  copy:
+    - { from: /build/deps/node_modules, to: /app/code/node_modules }
+run:
+  mode: http
+  schedule: native
+triggers: [http, schedule, queue]
+sandbox: [runc, gvisor, kata]

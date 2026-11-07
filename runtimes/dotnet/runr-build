@@ -1,0 +1,75 @@
+#!/bin/sh
+# runr-build restore|publish [SRC] [OUT] — RunR's build of a .NET function: the runtime's
+# dependencies.install (restore) and build.command (publish), and what runr-start runs for code
+# mounted at /app/code.
+#
+# The code of SRC (default /build/code) is copied to RUNR_BUILD_DIR (default /build/src) with the
+# RunR handler server (RunrHost.g.cs) and compiled with the function's project: Function.csproj,
+# else its only .csproj, else RunR's (host/Function.csproj). The target framework is the runtime
+# version (net10.0 on 10.0): the copy's Directory.Build.props sets it (and imports the code's own
+# Directory.Build.props, renamed), and the project's own TargetFramework / TargetFrameworks lines
+# are left out of the copy. The output is a self-contained application for this machine's
+# architecture in OUT (default /build/out): OUT/handler with the .NET runtime of this SDK, from the
+# runtime packs the image carries, so the function's image needs no .NET (only the libraries of
+# runtime-deps). restore fetches the project's NuGet packages; publish restores itself when
+# nothing did. Writes only to RUNR_BUILD_DIR, OUT, ~ and /tmp: SRC may be read-only.
+set -eu
+
+step="${1:-publish}"
+src="${2:-/build/code}"
+out="${3:-/build/out}"
+work="${RUNR_BUILD_DIR:-/build/src}"
+
+case "$(uname -m)" in
+    x86_64 | amd64) rid=linux-x64 ;;
+    aarch64 | arm64) rid=linux-arm64 ;;
+    *) echo "runr-build: unsupported machine $(uname -m)" >&2; exit 1 ;;
+esac
+
+if [ ! -f "$work/.runr-build" ]; then
+    mkdir -p "$work"
+    cp -R "$src/." "$work/"
+    rm -rf "${work:?}/bin" "${work:?}/obj"
+    cp /opt/runr/dotnet/RunrHost.cs "$work/RunrHost.g.cs"
+    if [ -f "$work/Directory.Build.props" ]; then
+        mv "$work/Directory.Build.props" "$work/Directory.Build.function.props"
+    fi
+    cp /opt/runr/dotnet/Directory.Build.props "$work/Directory.Build.props"
+    : > "$work/.runr-build"
+fi
+
+cd "$work"
+if [ -f Function.csproj ]; then
+    project=Function.csproj
+else
+    set -- *.csproj
+    if [ "$#" -gt 1 ]; then
+        echo "runr-build: more than one project file ($*): name the function's Function.csproj" >&2
+        exit 1
+    fi
+    if [ -f "$1" ]; then
+        project="$1"
+    else
+        cp /opt/runr/dotnet/Function.csproj Function.csproj
+        project=Function.csproj
+    fi
+fi
+sed -i -E '/<TargetFrameworks?>[^<]*<[/]TargetFrameworks?>/d' "$project"
+
+# The output RunR runs (/app/handler); the RunR server's Main even when the code has its own
+set -- -p:RuntimeIdentifier="$rid" -p:SelfContained=true \
+    -p:OutputType=Exe -p:AssemblyName=handler -p:StartupObject=Runr.Runtime.Host -p:UseAppHost=true \
+    -p:PublishTrimmed=false -p:PublishAot=false -p:PublishSingleFile=false -p:PublishReadyToRun=false \
+    -p:InvariantGlobalization=false -p:IsPackable=false -p:GenerateDocumentationFile=false \
+    -p:TreatWarningsAsErrors=false -nodeReuse:false --disable-build-servers
+
+case "$step" in
+    restore)
+        dotnet restore "$project" "$@" ;;
+    publish)
+        mkdir -p "$out"
+        dotnet publish "$project" -c Release -o "$out" "$@" ;;
+    *)
+        echo "runr-build: unknown step ${step} (restore, publish)" >&2
+        exit 1 ;;
+esac

@@ -40,7 +40,7 @@ jobs:
           echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tar.gz" | sha256sum -c -
           tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint
       - name: shellcheck
-        run: shellcheck -x -S warning ci.sh lib/*.sh ci/*.sh test/*.sh runtimes/*/entrypoint.sh runtimes/wasm-exec/runr-wasm-exec
+        run: shellcheck -x -S warning ci.sh lib/*.sh ci/*.sh test/*.sh runtimes/*/entrypoint.sh runtimes/*/runr-*
       - name: actionlint
         run: actionlint -color
 

@@ -50,5 +50,5 @@ for manifest in "$here"/runtimes/*/runtime.yaml; do
   esac
   count=$((count + 1))
 done
-[ "$count" = 11 ] || fail "${count} runtimes in runtimes/, the catalog has 11"
+[ "$count" = 15 ] || fail "${count} runtimes in runtimes/, the catalog has 15"
 echo "ok - catalog: ${count} runtimes, their files, images and the Spin CLI ${SPIN_VERSION}"

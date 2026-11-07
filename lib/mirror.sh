@@ -275,7 +275,9 @@ cmd_mirror_reqs() {
   fi
 }
 
-# Runtime base images — discover versions dynamically, then mirror
+# Runtime base images — discover versions dynamically, then mirror: for every version of every
+# language runtime (runtime_versions of lib/common.sh), its base images (runtime_base_images: the
+# image its Dockerfile builds on, for .NET also the runtime-deps image its functions run on)
 cmd_mirror_bases() {
   local dry_run=0
   for arg in "$@"; do
@@ -287,42 +289,25 @@ cmd_mirror_bases() {
   echo -e "${BOLD}Runtime base images → ${REGISTRY}/reqs/ multi-arch mirror${NC} (upstreams: ${REQS_UPSTREAMS})"
   echo ""
 
-  # Runtime → Docker Hub repo suffix mapping
-  local -A SUFFIX_MAP=(
-    [python]="-slim"
-    [nodejs]="-slim"
-    [go]="-alpine"
-    [php]="-cli-alpine"
-  )
-  local -A REPO_MAP=(
-    [python]="python"
-    [nodejs]="node"
-    [go]="golang"
-    [php]="php"
-  )
-
-  local ok=0 fail=0
+  local ok=0 fail=0 def runtime repo suffix versions ver pair target source
 
   for def in "${RUNTIME_DEFS[@]}"; do
-    IFS='|' read -r runtime repo suffix min_ver depth <<< "$def"
-    local img_name="${REPO_MAP[$runtime]}"
-    local img_suffix="${SUFFIX_MAP[$runtime]}"
+    IFS='|' read -r runtime repo suffix _ <<< "$def"
 
-    echo -e "${BOLD}── ${runtime} (${img_name}:*${img_suffix}) ──${NC}"
-    local versions
-    versions=$(discover_versions "$repo" "$suffix" "$min_ver" "$depth")
-
-    if [ "$runtime" = "nodejs" ]; then
-      versions=$(filter_nodejs_lts "$versions")
-    fi
+    echo -e "${BOLD}── ${runtime} (${repo}:*${suffix}) ──${NC}"
+    versions=$(runtime_versions "$runtime")
 
     for ver in $versions; do
-      local tag="${img_name}:${ver}${img_suffix}"
-      if _crane_copy "$tag" "${REGISTRY}/reqs/${tag}" "$dry_run"; then
-        ok=$((ok + 1))
-      else
-        fail=$((fail + 1))
-      fi
+      while IFS= read -r pair; do
+        [ -n "$pair" ] || continue
+        target="${pair%%|*}"
+        source="${pair#*|}"
+        if _crane_copy "$source" "${REGISTRY}/reqs/${target}" "$dry_run"; then
+          ok=$((ok + 1))
+        else
+          fail=$((fail + 1))
+        fi
+      done < <(runtime_base_images "$runtime" "$ver")
     done
     echo ""
   done

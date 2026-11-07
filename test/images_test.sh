@@ -23,6 +23,10 @@ touched() { printf '%s\n' "$@" | images paths | paste -sd' ' -; }
   || fail "python server: $(touched runtimes/python/server.py)"
 [ "$(touched runtimes/nodejs/server.js runtimes/php/server.php runtimes/go/wrapper_http.go)" = "nodejs go php" ] \
   || fail "nodejs, php, go: $(touched runtimes/nodejs/server.js runtimes/php/server.php runtimes/go/wrapper_http.go)"
+[ "$(touched runtimes/java/runr/sh/runr/runtime/Server.java runtimes/dotnet/host/RunrHost.cs runtimes/ruby/server.rb runtimes/bun/server.ts)" = "java dotnet ruby bun" ] \
+  || fail "java, dotnet, ruby, bun: $(touched runtimes/java/runr/sh/runr/runtime/Server.java runtimes/dotnet/host/RunrHost.cs runtimes/ruby/server.rb runtimes/bun/server.ts)"
+[ -z "$(touched runtimes/java/runtime.yaml runtimes/dotnet/runtime.yaml runtimes/ruby/runtime.yaml runtimes/bun/runtime.yaml)" ] \
+  || fail "the catalog manifest of a language runtime touched an image"
 [ "$(touched runtimes/pytorch/requirements-torch.txt)" = "pytorch pytorch-gpu" ] || fail "pytorch pin"
 [ "$(touched runtimes/tensorflow/Dockerfile.gpu)" = "tensorflow tensorflow-gpu" ] || fail "tensorflow gpu Dockerfile"
 [ "$(touched runtimes/wasm-rust/Cargo.toml runtimes/wasm-exec/runr-wasm-exec)" = "wasm-rust wasm-exec" ] || fail "wasm"
@@ -40,14 +44,14 @@ done
 echo "ok - paths: the image's directory, the ML runtimes' handler server, nothing for docs, tests and tooling"
 
 # --- manual selection ---------------------------------------------------------------------------------
-[ "$(images select all | wc -l)" = 16 ] || fail "all: $(images select all)"
-[ "$(images select cpu | paste -sd' ' -)" = "python nodejs go php wrapper wasm-rust wasm-go wasm-js wasm-python wasm-exec pytorch tensorflow hf-serve" ] \
+[ "$(images select all | wc -l)" = 20 ] || fail "all: $(images select all)"
+[ "$(images select cpu | paste -sd' ' -)" = "python nodejs go php java dotnet ruby bun wrapper wasm-rust wasm-go wasm-js wasm-python wasm-exec pytorch tensorflow hf-serve" ] \
   || fail "cpu: $(images select cpu)"
 [ "$(images select gpu | paste -sd' ' -)" = "pytorch-gpu tensorflow-gpu hf-serve-cuda" ] || fail "gpu"
 [ "$(images select "wrapper, python wrapper" | paste -sd' ' -)" = "python wrapper" ] || fail "keys: $(images select "wrapper, python wrapper")"
-[ "$(images select languages | paste -sd' ' -)" = "python nodejs go php" ] || fail "languages"
-out=$(images select ruby 2>&1) && fail "an unknown key passed: $out"
-[[ "$out" == "unknown image: ruby"* ]] || fail "unknown key: $out"
+[ "$(images select languages | paste -sd' ' -)" = "python nodejs go php java dotnet ruby bun" ] || fail "languages"
+out=$(images select cobol 2>&1) && fail "an unknown key passed: $out"
+[[ "$out" == "unknown image: cobol"* ]] || fail "unknown key: $out"
 out=$(images select "" 2>&1) && fail "an empty selection passed"
 [ "$(images json python wrapper)" = '["python","wrapper"]' ] || fail "json: $(images json python wrapper)"
 [ "$(images json)" = '[]' ] || fail "json of nothing: $(images json)"
@@ -66,7 +70,7 @@ done
 [ "$(images command pytorch-gpu)" = "ml-runtimes pytorch gpu" ] || fail "pytorch-gpu: $(images command pytorch-gpu)"
 [ "$(images command wasm-exec)" = "wasm exec" ] || fail "wasm-exec"
 [ "$(images command hf-serve-cuda)" = "hf-serve cuda" ] || fail "hf-serve-cuda"
-images command ruby >/dev/null 2>&1 && fail "a command for an unknown key"
+images command cobol >/dev/null 2>&1 && fail "a command for an unknown key"
 echo "ok - command: a ci.sh command for every key"
 
 # --- changed: between two commits --------------------------------------------------------------------

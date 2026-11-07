@@ -57,7 +57,7 @@ build() {
 # --- the catalog of runtimes/ ---------------------------------------------------------------------------
 build "$here/runtimes" > "$tmp/real.json" || fail "the catalog of runtimes/ does not build"
 ids=$(jq -r '[.runtimes[].manifest.id] | join(" ")' "$tmp/real.json")
-[ "$ids" = "python nodejs go php tensorflow pytorch wasm-exec wasm-go wasm-js wasm-python wasm-rust" ] \
+[ "$ids" = "python nodejs go php tensorflow pytorch bun dotnet java ruby wasm-exec wasm-go wasm-js wasm-python wasm-rust" ] \
   || fail "the catalog order: $ids"
 [ "$(jq -r '[.runtimes[].path] | join(" ")' "$tmp/real.json")" = "$(for id in $ids; do printf 'runtimes/%s/runtime.yaml ' "$id"; done | sed 's/ $//')" ] \
   || fail "the paths: $(jq -c '[.runtimes[].path]' "$tmp/real.json")"
@@ -82,7 +82,7 @@ jq -e '[.runtimes[] | select(has("files"))] | length == 0' "$tmp/real.json" >/de
   = '["apiVersion","kind","id","name","description","language","extensions","category","versionDiscovery","handler","template","dependencies","run","triggers","sandbox"]' ] \
   || fail "python's manifest keys: $(jq -c '.runtimes[0].manifest | keys_unsorted' "$tmp/real.json")"
 catalog_validate "$tmp/real.json" > "$tmp/out" 2>&1 || [ "$?" = 2 ] || fail "the catalog of runtimes/ is not valid: $(cat "$tmp/out")"
-echo "ok - the catalog of runtimes/: 11 runtimes in RunR's order, @file references inlined, no files, the YAML's types"
+echo "ok - the catalog of runtimes/: 15 runtimes in RunR's order, @file references inlined, no files, the YAML's types"
 
 # --- building from fixtures -----------------------------------------------------------------------------
 fx="$tmp/fixtures"
@@ -439,10 +439,10 @@ echo "ok - refused: a registry error, a current catalog that does not verify, a 
 # --- ci.sh catalog ----------------------------------------------------------------------------------------------
 unset RUNTIMES_DIR
 out=$("$here/ci.sh" catalog build 2>&1) || fail "ci.sh catalog build: $out"
-for id in python nodejs go php tensorflow pytorch wasm-exec wasm-go wasm-js wasm-python wasm-rust; do
+for id in python nodejs go php tensorflow pytorch bun dotnet java ruby wasm-exec wasm-go wasm-js wasm-python wasm-rust; do
   grep -qE "^    ${id}  " <<< "$out" || fail "ci.sh catalog build: ${id} not in the summary: $out"
 done
-"$here/ci.sh" catalog build --out - 2>/dev/null | jq -e '.runtimes | length == 11' >/dev/null || fail "ci.sh catalog build --out -: no catalog on stdout"
+"$here/ci.sh" catalog build --out - 2>/dev/null | jq -e '.runtimes | length == 15' >/dev/null || fail "ci.sh catalog build --out -: no catalog on stdout"
 "$here/ci.sh" catalog build --out "$tmp/ci.json" > /dev/null 2>&1 || fail "ci.sh catalog build --out FILE"
 if [ -n "$validator" ]; then
   "$here/ci.sh" catalog validate "$tmp/ci.json" "$example" > "$tmp/out" 2>&1 || fail "ci.sh catalog validate: $(cat "$tmp/out")"

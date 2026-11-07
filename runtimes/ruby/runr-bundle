@@ -1,0 +1,23 @@
+#!/bin/sh
+# runr-bundle [SRC] [OUT] — the gems of a Ruby function, the runtime's dependencies.install:
+# SRC/Gemfile (default /build/code; its Gemfile.lock too, when there is one) installed with
+# Bundler into OUT (default /build/gems): OUT/Gemfile, OUT/Gemfile.lock and the gems in OUT/vendor,
+# without the development and test groups. The install is standalone: OUT/vendor/bundler/setup.rb
+# puts the gems on the load path without Bundler resolving the Gemfile at every start (the
+# runtime's server requires it, RUNR_BUNDLE_SETUP). The function's image has OUT at /app/gems,
+# and BUNDLE_GEMFILE / BUNDLE_PATH point there for code that uses Bundler itself. Writes only to
+# OUT and ~: SRC may be read-only. The image has no compiler: a gem with a C extension needs a
+# precompiled platform gem.
+set -eu
+
+src="${1:-/build/code}"
+out="${2:-/build/gems}"
+mkdir -p "$out"
+cp "$src/Gemfile" "$out/Gemfile"
+if [ -f "$src/Gemfile.lock" ]; then
+    cp "$src/Gemfile.lock" "$out/Gemfile.lock"
+fi
+
+cd "$out"
+BUNDLE_GEMFILE="$out/Gemfile" BUNDLE_PATH="$out/vendor" BUNDLE_WITHOUT=development:test \
+    bundle install --standalone --jobs 4 --retry 2

@@ -1,0 +1,13 @@
+<Project>
+  <!-- RunR's build of a .NET function (runr-build): the target framework is the runtime version
+       (RUNR_DOTNET_VERSION of the image, 10.0: net10.0), and ASP.NET Core is referenced for the
+       handler server (Kestrel). The code's own Directory.Build.props, when it has one, is
+       imported first. -->
+  <Import Project="Directory.Build.function.props" Condition="Exists('Directory.Build.function.props')" />
+  <PropertyGroup>
+    <TargetFramework>net$(RUNR_DOTNET_VERSION)</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

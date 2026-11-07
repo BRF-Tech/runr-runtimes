@@ -1,0 +1,20 @@
+#!/bin/sh
+# runr-install [SRC] [OUT] — the packages of a Bun function, the runtime's dependencies.install:
+# SRC/package.json (default /build/code; its bun.lock, bun.lockb or package-lock.json too) installed
+# with `bun install --production` in OUT (default /build/deps). The function's image has
+# OUT/node_modules at /app/code/node_modules, where the function's imports find them. Writes only
+# to OUT and ~ (Bun's package cache): SRC may be read-only.
+set -eu
+
+src="${1:-/build/code}"
+out="${2:-/build/deps}"
+mkdir -p "$out"
+cp "$src/package.json" "$out/package.json"
+for lock in bun.lock bun.lockb package-lock.json; do
+    if [ -f "$src/$lock" ]; then
+        cp "$src/$lock" "$out/$lock"
+    fi
+done
+
+cd "$out"
+bun install --production --no-progress

@@ -1,0 +1,58 @@
+# Built-in runtime: Java (Eclipse Temurin, the LTS lines). Compiled: every version is built — the
+# project's .java files with javac (runr-build), the jars of its pom.xml with Maven (runr-deps) —
+# into an image of the version image plus the classes; the image's handler server
+# (sh.runr.runtime.Server, started by runr-start) serves the RunR HTTP contract and runs a
+# scheduled invocation once (RUNR_MODE=schedule).
+apiVersion: runr.sh/v1
+kind: Runtime
+id: java
+name: Java
+description: Eclipse Temurin (OpenJDK) LTS with the RunR handler server — public static Object handler(Map<String, Object> event, Map<String, Object> context).
+language: java
+extensions: [java]
+category: general
+versionDiscovery:
+  repository: ghcr.io/brf-tech/runr/exec-java
+  image: "ghcr.io/brf-tech/runr/exec-java:{version}"
+  eol: eclipse-temurin
+handler:
+  file: Main
+  function: handler
+  pattern: '\b{handler}\s*\('
+template:
+  files:
+    "{file}": |-
+      import java.util.Map;
+
+      public class Main {
+          public static Object {handler}(Map<String, Object> event, Map<String, Object> context) {
+              return Map.of("statusCode", 200, "body", "Hello, World!");
+          }
+      }
+dependencies:
+  file: pom.xml
+  template: |
+    <project xmlns="http://maven.apache.org/POM/4.0.0">
+      <modelVersion>4.0.0</modelVersion>
+      <groupId>sh.runr</groupId>
+      <artifactId>function</artifactId>
+      <version>1.0.0</version>
+      <dependencies>
+        <dependency>
+          <groupId>redis.clients</groupId>
+          <artifactId>jedis</artifactId>
+          <version>8.0.2</version>
+        </dependency>
+      </dependencies>
+    </project>
+  install: /opt/runr/bin/runr-deps /build/code/pom.xml /build/out
+build:
+  image: "{image}"
+  command: /opt/runr/bin/runr-build /build/code /build/out
+  runImage: "{image}"
+run:
+  mode: http
+  schedule: native
+  command: ["/opt/runr/bin/runr-start"]
+triggers: [http, schedule, queue]
+sandbox: [runc, gvisor, kata]

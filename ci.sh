@@ -28,7 +28,7 @@ runtimes: lib/build-ml.sh); --push pushes them once all passed. --no-smoke skips
 a local build and is refused with --push. Every build pulls its base images (--pull).
 
 Commands:
-  build [--push] [--no-smoke] [--version=X.Y] [python|nodejs|go|php...]
+  build [--push] [--no-smoke] [--version=X.Y] [python|nodejs|go|php|java|dotnet|ruby|bun...]
                                       Language runtimes: discover the upstream versions, skip EOL
                                       ones, build exec-<runtime>:<major.minor>; --push publishes each
                                       changed one as a routine patch (multi-arch, + <full>-r<n>);

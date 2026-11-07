@@ -90,38 +90,35 @@ push_built() {
   cleanup_buildx
 }
 
-# discover_language_versions [RUNTIME...] — the versions of the language runtimes (all four, or the
-# ones named) that are not end-of-life, from Docker Hub's tags of their base images and
-# endoflife.date: DISCOVERED[<runtime>]="<version> <version>…" (a global), with a report
+# discover_language_versions [RUNTIME...] — the versions of the language runtimes (all of them, or
+# the ones named) that are not end-of-life, from the tags of their upstream images (runtime_versions:
+# Docker Hub, or the image's own registry) and endoflife.date: DISCOVERED[<runtime>]="<version>
+# <version>…" (a global), with a report
 discover_language_versions() {
-  local def runtime repo suffix min_ver depth versions ver result status active_versions
+  local def runtime repo suffix min_ver depth filter product versions ver result status active_versions
   declare -gA DISCOVERED=()
 
-  echo "Fetching available versions from Docker Hub..."
+  echo "Fetching available versions from the upstream images..."
   echo ""
 
   for def in "${RUNTIME_DEFS[@]}"; do
-    IFS='|' read -r runtime repo suffix min_ver depth <<< "$def"
+    IFS='|' read -r runtime repo suffix min_ver depth filter product <<< "$def"
     if [ "$#" -gt 0 ] && [[ " $* " != *" ${runtime} "* ]]; then
       continue
     fi
 
-    echo -e "${BOLD}── ${runtime} (>= ${min_ver}, ${depth}) ──${NC}"
-    versions=$(discover_versions "$repo" "$suffix" "$min_ver" "$depth")
+    echo -e "${BOLD}── ${runtime} (${repo}, >= ${min_ver}, ${depth}${filter:+, ${filter}}) ──${NC}"
+    versions=$(runtime_versions "$runtime")
 
     if [ -z "$versions" ]; then
-      echo -e "  ${YELLOW}Warning: could not fetch versions from Docker Hub, skipping.${NC}"
+      echo -e "  ${YELLOW}Warning: could not fetch versions of ${repo}, skipping.${NC}"
       echo ""
       continue
     fi
 
-    if [ "$runtime" = "nodejs" ]; then
-      versions=$(filter_nodejs_lts "$versions")
-    fi
-
     active_versions=""
     for ver in $versions; do
-      result=$(check_eol "$runtime" "$ver")
+      result=$(check_eol "${product:-$runtime}" "$ver")
       status="${result%%|*}"
 
       if [ "$status" = "eol" ]; then
@@ -138,17 +135,23 @@ discover_language_versions() {
 }
 
 # cmd_build — Discover + EOL check + build the language runtime images
-# (exec-<runtime>:<major.minor> of python, nodejs, go and php: all four, or the ones named).
+# (exec-<runtime>:<major.minor> of the runtimes of RUNTIME_DEFS: all of them, or the ones named).
 # --push publishes each one as a routine patch (lib/patch.sh): exec-<runtime>:<major.minor> and
 # the immutable <full version>-r<n>, or nothing when the build is the image already published.
 cmd_build() {
   build_options "ci.sh build" "$@" || return 1
-  local push="$_push" smoke="$_smoke" only=() arg one=""
+  local push="$_push" smoke="$_smoke" only=() arg ids one=""
+  ids="$(runtime_ids)"
   for arg in ${_args[@]+"${_args[@]}"}; do
     case "$arg" in
-      python|nodejs|go|php) only+=("$arg") ;;
       --version=*) one="${arg#--version=}" ;;
-      *) echo -e "${RED}unknown argument: ${arg} (python, nodejs, go, php, --version=X.Y, --push, --no-smoke)${NC}"; return 1 ;;
+      *)
+        if [[ " ${ids} " == *" ${arg} "* ]]; then
+          only+=("$arg")
+        else
+          echo -e "${RED}unknown argument: ${arg} (${ids// /, }, --version=X.Y, --push, --no-smoke)${NC}"
+          return 1
+        fi ;;
     esac
   done
   # --version=X.Y: that version of the one runtime named (the language bot's test build)
@@ -176,7 +179,7 @@ cmd_build() {
 
     if [ -n "$one" ]; then
       if [[ " ${versions} " != *" ${one} "* ]]; then
-        echo -e "${RED}${runtime} ${one} is not a current version (${versions# }): not on Docker Hub, below the minimum, or end-of-life${NC}"
+        echo -e "${RED}${runtime} ${one} is not a current version (${versions# }): not upstream, below the minimum, or end-of-life${NC}"
         return 1
       fi
       versions="$one"

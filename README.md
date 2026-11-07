@@ -21,6 +21,10 @@ at the tags pinned in its `runtime/lib/runtime-images.sh`.
 | `exec-nodejs` | `<major.minor>`: the latest minor of every even (LTS) Node.js major from 20 | amd64, arm64 | `runtimes/nodejs/` |
 | `exec-go` | `<major.minor>` from 1.22, without end-of-life releases | amd64, arm64 | `runtimes/go/` |
 | `exec-php` | `<major.minor>` from 8.2, without end-of-life releases | amd64, arm64 | `runtimes/php/` |
+| `exec-java` | `<major>.0` of every Eclipse Temurin LTS major from 21 that is not end-of-life (today 21.0 and 25.0) | amd64, arm64 | `runtimes/java/` |
+| `exec-dotnet` | `<major.minor>` of every released .NET from 10.0, without end-of-life releases (today 10.0) | amd64, arm64 | `runtimes/dotnet/` |
+| `exec-ruby` | `<major.minor>` from 3.3, without end-of-life releases (today 3.3, 3.4 and 4.0) | amd64, arm64 | `runtimes/ruby/` |
+| `exec-bun` | `<major.minor>`: the newest minor of every Bun major (today 1.4) | amd64, arm64 | `runtimes/bun/` |
 | `exec-pytorch` | `<X.Y>` (CPU) and `<X.Y>-gpu` (CUDA 12.6); X.Y is the torch pin's major.minor (`requirements-torch.txt`) | amd64 | `runtimes/pytorch/` |
 | `exec-tensorflow` | `<X.Y>` (CPU) and `<X.Y>-gpu` (CUDA); X.Y is the tensorflow-cpu pin's major.minor (`requirements-cpu.txt`) | amd64 | `runtimes/tensorflow/` |
 | `exec-wasm-rust`, `exec-wasm-go`, `exec-wasm-js`, `exec-wasm-python`, `exec-wasm-exec` | the `version` of the runtime's `runtime.yaml` (today `4.1`) | amd64, arm64 | `runtimes/wasm-*/` |
@@ -37,10 +41,15 @@ Every image built here carries the label
 
 What the images are:
 
-- **Language runtimes** (`exec-python`, `exec-nodejs`, `exec-go`, `exec-php`): the image of a
-  function. Each serves RunR's HTTP contract itself (the language's handler server in
-  `runtimes/<runtime>/`) and runs a scheduled invocation once with `RUNR_MODE=schedule`. User code is
-  mounted at `/app/code`.
+- **Language runtimes** (`exec-python`, `exec-nodejs`, `exec-go`, `exec-php`, `exec-java`,
+  `exec-dotnet`, `exec-ruby`, `exec-bun`): the image of a function. Each serves RunR's HTTP contract
+  itself (the language's handler server in `runtimes/<runtime>/`) and runs a scheduled invocation
+  once with `RUNR_MODE=schedule`. User code is mounted at `/app/code`. The compiled languages build
+  every function into an image of its own: Go and .NET (`exec-dotnet` is the .NET SDK, the function
+  runs as a self-contained application on Microsoft's chiseled `runtime-deps` image), and Java
+  (`exec-java` is the JDK with Maven, and the function's image is `exec-java` plus its classes). The
+  images run as a user that is not root (`runr`, 10001; .NET: `app`, 1654), and RunR's function
+  build runs as that user too: `/build` belongs to it.
 - **ML runtimes** (`exec-pytorch`, `exec-tensorflow`): Python 3.12 with the framework and the ML
   essentials preinstalled, on the Python runtime's handler server. The `-gpu` images carry the
   CUDA builds of the frameworks.
@@ -83,7 +92,7 @@ and RunR's guide [docs/executor-development.md](https://github.com/BRF-Tech/runr
 
 | Path | Contents |
 |------|----------|
-| `runtimes/<id>/` | The 11 built-in runtimes: `runtime.yaml`, Dockerfile, handler server or toolchain files. They stay together in one directory because the API's `runtimes:bundle` reads `*/runtime.yaml` of one directory. |
+| `runtimes/<id>/` | The 15 built-in runtimes: `runtime.yaml`, Dockerfile, handler server or toolchain files. They stay together in one directory because the API's `runtimes:bundle` reads `*/runtime.yaml` of one directory. |
 | `wrapper/` | `runr-wrapper` (Go) and its tests |
 | `hf-serve/` | hf-serve (Python), its CPU and CUDA Dockerfiles and its tests |
 | `ci.sh`, `lib/` | Build, smoke-test, push, patch, patch feed, runtime catalog, mirror and EOL commands |
@@ -102,7 +111,8 @@ You need bash, Docker with buildx, and curl. `mirror-*` also needs
 
 ```bash
 ./ci.sh build python               # exec-python, every current version, built and smoke-tested
-./ci.sh build                      # all four language runtimes
+./ci.sh build java dotnet          # exec-java and exec-dotnet
+./ci.sh build                      # all eight language runtimes
 ./ci.sh wrapper                    # wrapper:<version>
 ./ci.sh wasm rust js               # two WebAssembly build images (all five without a name)
 ./ci.sh ml-runtimes pytorch cpu    # exec-pytorch:<X.Y> (pytorch|tensorflow, cpu|gpu)
@@ -267,8 +277,8 @@ no other push, refspec or force, no secret but the `GITHUB_TOKEN`, RunR at its l
 
 ## Patches and the patch feed
 
-Every published build of a language runtime (`exec-python`, `exec-nodejs`, `exec-go`, `exec-php`)
-is a **patch**. RunR instances learn about patches from one signed document, the **patch feed**.
+Every published build of a language runtime (`exec-python`, `exec-nodejs`, `exec-go`, `exec-php`,
+`exec-java`, `exec-dotnet`, `exec-ruby`, `exec-bun`) is a **patch**. RunR instances learn about patches from one signed document, the **patch feed**.
 
 ### Patch tags
 
@@ -276,7 +286,8 @@ A build of `exec-<runtime>:<major.minor>` that differs from the published image 
 tags: the floating `<major.minor>` (`exec-php:8.3`), which always names the newest patch, and the
 immutable `<full upstream version>-r<n>` (`exec-php:8.3.36-r1`). The full version is the one the
 image runs, as its smoke test reads it from the language (`PHP_VERSION`, `process.versions.node`,
-`platform.python_version()`, `runtime.Version()`). `n` counts the builds of the same upstream
+`platform.python_version()`, `runtime.Version()`, Java's `Runtime.version()` as
+feature.interim.update, `Environment.Version`, `RUBY_VERSION`, `Bun.version`). `n` counts the builds of the same upstream
 version that published a different image: a new base image or OS packages, our sources, the
 packages the Dockerfile installs. A patch tag is never overwritten.
 
@@ -526,7 +537,12 @@ RunR's [executor development guide](https://github.com/BRF-Tech/runr/blob/main/d
 `ghcr.io/brf-tech/runr/reqs/` holds every third-party image RunR uses, copied multi-arch from
 Docker Hub: Docker Hub's anonymous pull limit would otherwise stop nodes, build hosts and CI
 runners. `lib/mirror.sh` lists them (`REQS_IMAGES`). The base images of the language runtimes are
-discovered like the runtime versions (`mirror-bases`).
+discovered like the runtime versions (`mirror-bases`, `RUNTIME_DEFS` of `lib/common.sh`): the
+image each Dockerfile builds on (a Temurin major is mirrored under its runtime version,
+`eclipse-temurin:21-jdk` as `eclipse-temurin:21.0-jdk`), and for .NET also the image its functions
+run on, `mcr.microsoft.com/dotnet/runtime-deps:<version>-resolute-chiseled-extra` as
+`dotnet-runtime-deps:<version>-chiseled-extra`. The .NET images come from Microsoft's registry,
+not Docker Hub.
 
 - When Docker Hub refuses a copy, the image comes from a pull-through mirror of it
   (`REQS_UPSTREAMS`), and only by Docker Hub's digest.

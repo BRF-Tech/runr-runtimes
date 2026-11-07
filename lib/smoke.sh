@@ -3,8 +3,8 @@
 # (ml_runtime_smoke in build-ml.sh): a tensor handler over http and schedule, on the GPU where
 # the host gives Docker one.
 #
-#   runtime_smoke IMAGE RUNTIME VERSION   language runtimes (python, nodejs, go, php): a handler in
-#                                         /app/code answers a request like a function (http trigger,
+#   runtime_smoke IMAGE RUNTIME VERSION   language runtimes (RUNTIME_DEFS): a handler in /app/code
+#                                         answers a request like a function (http trigger,
 #                                         the image's own server; the request comes from a curl
 #                                         container in the same network namespace, so no port is
 #                                         published and the image needs no client), then runs once
@@ -23,7 +23,8 @@
 
 # The client of runtime_smoke: curl from the reqs mirror
 SMOKE_CURL_IMAGE="${SMOKE_CURL_IMAGE:-ghcr.io/brf-tech/runr/reqs/curl:latest}"
-# How long runtime_smoke waits for the server (the go image compiles the handler first)
+# How long runtime_smoke waits for the server (the go, java and dotnet images compile the handler
+# first)
 SMOKE_TIMEOUT="${SMOKE_TIMEOUT:-180}"
 
 # smoke_handler RUNTIME DIR — writes the smoke handler of a language runtime into DIR and prints its
@@ -105,6 +106,74 @@ func Handler(event interface{}, context interface{}) (interface{}, error) {
 }
 GO
       echo main.go ;;
+    java)
+      cat > "${dir}/Main.java" <<'JAVA'
+import java.util.Map;
+
+public class Main {
+    public static Object handler(Map<String, Object> event, Map<String, Object> context) {
+        long a = ((Number) event.getOrDefault("a", 40)).longValue();
+        long b = ((Number) event.getOrDefault("b", 2)).longValue();
+        Runtime.Version v = Runtime.version();
+        return Map.of("statusCode", 200, "headers", Map.of("Content-Type", "application/json"), "body", Map.of(
+            "runtime", "java", "version", v.feature() + "." + v.interim() + "." + v.update(), "sum", a + b,
+            "trigger", event.getOrDefault("trigger", "http")));
+    }
+}
+JAVA
+      echo Main.java ;;
+    dotnet)
+      cat > "${dir}/Function.cs" <<'CS'
+using System;
+using System.Collections.Generic;
+using System.Text.Json.Nodes;
+
+public static class Function
+{
+    public static object Handler(JsonNode? input, IDictionary<string, object?> context)
+    {
+        long a = input?["a"]?.GetValue<long>() ?? 40;
+        long b = input?["b"]?.GetValue<long>() ?? 2;
+        return new
+        {
+            statusCode = 200,
+            headers = new Dictionary<string, string> { ["Content-Type"] = "application/json" },
+            body = new
+            {
+                runtime = "dotnet", version = Environment.Version.ToString(3), sum = a + b,
+                trigger = input?["trigger"]?.GetValue<string>() ?? "http",
+            },
+        };
+    }
+}
+CS
+      echo Function.cs ;;
+    ruby)
+      cat > "${dir}/main.rb" <<'RB'
+def handler(event, context)
+  a = event.fetch("a", 40)
+  b = event.fetch("b", 2)
+  { statusCode: 200, headers: { "Content-Type" => "application/json" }, body: {
+    runtime: "ruby", version: RUBY_VERSION, sum: a + b, trigger: event.fetch("trigger", "http"),
+  } }
+end
+RB
+      echo main.rb ;;
+    bun)
+      cat > "${dir}/main.ts" <<'TS'
+type Event = { a?: number; b?: number; trigger?: string };
+
+export async function handler(event: Event, context: unknown) {
+  const a = event.a ?? 40;
+  const b = event.b ?? 2;
+  return {
+    statusCode: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: { runtime: 'bun', version: Bun.version, sum: a + b, trigger: event.trigger ?? 'http' },
+  };
+}
+TS
+      echo main.ts ;;
     *)
       return 1 ;;
   esac

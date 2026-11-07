@@ -26,6 +26,10 @@ show it private, set it to public there.
 | `runr/exec-nodejs` | `ghcr.io/brf-tech/runr/exec-nodejs` | publish, patch (Admin role: see below) |
 | `runr/exec-go` | `ghcr.io/brf-tech/runr/exec-go` | publish, patch (Admin role: see below) |
 | `runr/exec-php` | `ghcr.io/brf-tech/runr/exec-php` | publish, patch (Admin role: see below) |
+| `runr/exec-java` | `ghcr.io/brf-tech/runr/exec-java` | publish, patch (Admin role: see below) |
+| `runr/exec-dotnet` | `ghcr.io/brf-tech/runr/exec-dotnet` | publish, patch (Admin role: see below) |
+| `runr/exec-ruby` | `ghcr.io/brf-tech/runr/exec-ruby` | publish, patch (Admin role: see below) |
+| `runr/exec-bun` | `ghcr.io/brf-tech/runr/exec-bun` | publish, patch (Admin role: see below) |
 | `runr/exec-pytorch` | `ghcr.io/brf-tech/runr/exec-pytorch` | publish (CPU), heavy (`-gpu`) |
 | `runr/exec-tensorflow` | `ghcr.io/brf-tech/runr/exec-tensorflow` | publish (CPU), heavy (`-gpu`) |
 | `runr/exec-wasm-rust` | `ghcr.io/brf-tech/runr/exec-wasm-rust` | publish |
@@ -54,8 +58,9 @@ The language runtimes are published as patches: every build that changed gets an
 `<full version>-r<n>` (README.md, "Patches and the patch feed"). The feed jobs of the publish,
 patch and platform-release workflows delete the patch tags beyond the newest five of each version,
 through the GitHub Packages API with the workflow's `GITHUB_TOKEN`. A workflow token may delete
-versions of a package only when the repository has the **Admin** role on it, so these four
-packages need, once, instead of Write:
+versions of a package only when the repository has the **Admin** role on it, so these eight
+packages need, once, instead of Write (the last four are created by the publish workflow, linked
+to this repository: check their Manage Actions access after the first publish):
 
 **Package settings → Manage Actions access → `BRF-Tech/runr-runtimes` → role Admin.**
 
@@ -65,6 +70,10 @@ packages need, once, instead of Write:
 | `runr/exec-nodejs` | <https://github.com/orgs/BRF-Tech/packages/container/runr%2Fexec-nodejs/settings> |
 | `runr/exec-go` | <https://github.com/orgs/BRF-Tech/packages/container/runr%2Fexec-go/settings> |
 | `runr/exec-php` | <https://github.com/orgs/BRF-Tech/packages/container/runr%2Fexec-php/settings> |
+| `runr/exec-java` | <https://github.com/orgs/BRF-Tech/packages/container/runr%2Fexec-java/settings> |
+| `runr/exec-dotnet` | <https://github.com/orgs/BRF-Tech/packages/container/runr%2Fexec-dotnet/settings> |
+| `runr/exec-ruby` | <https://github.com/orgs/BRF-Tech/packages/container/runr%2Fexec-ruby/settings> |
+| `runr/exec-bun` | <https://github.com/orgs/BRF-Tech/packages/container/runr%2Fexec-bun/settings> |
 
 Without it the deletions fail (HTTP 403), the feed job fails after it published the feed, and the
 old patch tags stay until the next feed update deletes them.
@@ -177,24 +186,26 @@ to the catalog job as `CATALOG_SIGNING_KEY=env://<secret>`, `CATALOG_COSIGN_PASS
 ## The reqs mirror (mirror workflow, and mirror-bases of the publish and patch workflows)
 
 Every image of `REQS_IMAGES` in `lib/mirror.sh`, and the base images of the language runtimes
-(`python`, `node`, `golang`, `php`):
+(`python`, `node`, `golang`, `php`, `eclipse-temurin`, `dotnet-sdk` and `dotnet-runtime-deps`,
+`ruby`, `bun`):
 
 | Package | Package | Package |
 |---------|---------|---------|
-| `runr/reqs/alpine` | `runr/reqs/frankenphp` | `runr/reqs/pdns-auth` |
-| `runr/reqs/bash` | `runr/reqs/garage` | `runr/reqs/php` |
-| `runr/reqs/binfmt` | `runr/reqs/golang` | `runr/reqs/postgres` |
-| `runr/reqs/busybox` | `runr/reqs/greenmail` | `runr/reqs/python` |
-| `runr/reqs/caddy` | `runr/reqs/helm` | `runr/reqs/pytorch` |
-| `runr/reqs/cert-manager-acmesolver` | `runr/reqs/k6` | `runr/reqs/rabbitmq` |
-| `runr/reqs/cert-manager-cainjector` | `runr/reqs/kafka` | `runr/reqs/rclone` |
-| `runr/reqs/cert-manager-controller` | `runr/reqs/kindest-node` | `runr/reqs/redis` |
-| `runr/reqs/cert-manager-webhook` | `runr/reqs/mailpit` | `runr/reqs/rust` |
-| `runr/reqs/composer` | `runr/reqs/nats` | `runr/reqs/tempo` |
-| `runr/reqs/curl` | `runr/reqs/nginx` | `runr/reqs/tinygo` |
-| `runr/reqs/docker` | `runr/reqs/node` | `runr/reqs/traefik` |
-| `runr/reqs/eclipse-mosquitto` | `runr/reqs/openbao` | |
-| `runr/reqs/external-secrets` | `runr/reqs/opentelemetry-collector-contrib` | |
+| `runr/reqs/alpine` | `runr/reqs/eclipse-mosquitto` | `runr/reqs/openbao` |
+| `runr/reqs/bash` | `runr/reqs/eclipse-temurin` | `runr/reqs/opentelemetry-collector-contrib` |
+| `runr/reqs/binfmt` | `runr/reqs/external-secrets` | `runr/reqs/pdns-auth` |
+| `runr/reqs/bun` | `runr/reqs/frankenphp` | `runr/reqs/php` |
+| `runr/reqs/busybox` | `runr/reqs/garage` | `runr/reqs/postgres` |
+| `runr/reqs/caddy` | `runr/reqs/golang` | `runr/reqs/python` |
+| `runr/reqs/cert-manager-acmesolver` | `runr/reqs/greenmail` | `runr/reqs/pytorch` |
+| `runr/reqs/cert-manager-cainjector` | `runr/reqs/helm` | `runr/reqs/rabbitmq` |
+| `runr/reqs/cert-manager-controller` | `runr/reqs/k6` | `runr/reqs/rclone` |
+| `runr/reqs/cert-manager-webhook` | `runr/reqs/kafka` | `runr/reqs/redis` |
+| `runr/reqs/composer` | `runr/reqs/kindest-node` | `runr/reqs/ruby` |
+| `runr/reqs/curl` | `runr/reqs/mailpit` | `runr/reqs/rust` |
+| `runr/reqs/docker` | `runr/reqs/nats` | `runr/reqs/tempo` |
+| `runr/reqs/dotnet-runtime-deps` | `runr/reqs/nginx` | `runr/reqs/tinygo` |
+| `runr/reqs/dotnet-sdk` | `runr/reqs/node` | `runr/reqs/traefik` |
 
 When you add an image to `REQS_IMAGES` whose package does not exist yet, the mirror workflow
 creates the package, linked to this repository and public like it (the source image's own

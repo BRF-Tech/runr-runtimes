@@ -66,11 +66,11 @@ wrapper_smoke() { echo "smoke $1 $2" >> "$log"; }
 wasm_smoke() { echo "smoke $1" >> "$log"; }
 hf_serve_smoke() { echo "smoke $1 $2 $3" >> "$log"; }
 
-# Docker Hub and endoflife.date: one current Python version
+# Docker Hub and endoflife.date: one current version (3.12 of Python, and of Node.js)
 discover_versions() { echo "3.12"; }
 check_eol() { echo "supported|2099-10-31"; }
 # shellcheck disable=SC2034 # read by cmd_build
-RUNTIME_DEFS=("python|library/python|-slim|3.10|major.minor")
+RUNTIME_DEFS=("python|library/python|-slim|3.10|major.minor" "nodejs|library/node|-slim|20.0|major.minor")
 # the registry: no image of the language runtimes published yet (the first patch is r1)
 registry_manifest() { return 3; }
 registry_tags_checked() { :; }
@@ -141,9 +141,11 @@ grep -qE "^docker build --pull .*--build-arg VERSION=3.12 -t ${REGISTRY}/exec-py
 grep -qE "^docker buildx build .*--platform linux/amd64,linux/arm64 .*-t ${REGISTRY}/exec-python:3.12 -t ${REGISTRY}/exec-python:3.12.7-r1 .*--build-arg VERSION=3.12 --output type=image,push=true,.* ${here}/runtimes/python$" "$log" \
   || fail "exec-python: multi-arch push of the patch $(grep '^docker buildx build' "$log")"
 grep -qxF "smoke ${REGISTRY}/exec-python:3.12" "$log" || fail "exec-python: smoke $(grep '^smoke' "$log")"
-out=$( (set -euo pipefail; cmd_build ruby) 2>&1) && fail "an unknown runtime passed: $out"
+out=$( (set -euo pipefail; cmd_build cobol) 2>&1) && fail "an unknown runtime passed: $out"
+[[ "$out" == *"unknown argument: cobol (python, nodejs, --version=X.Y, --push, --no-smoke)"* ]] || fail "unknown runtime: $out"
 run cmd_build nodejs
-grep -q '^docker build' "$log" && fail "a runtime that was not named was built: $(grep '^docker build' "$log")"
+grep -q "exec-python" "$log" && fail "a runtime that was not named was built: $(grep '^docker build' "$log")"
+grep -qE "^docker build --pull .* -t ${REGISTRY}/exec-nodejs:3.12 ${here}/runtimes/nodejs$" "$log" || fail "the runtime named was not built: $(grep '^docker build' "$log")"
 echo "ok - ci.sh build: exec-<runtime>:<version> from runtimes/<runtime>, only the runtimes named"
 
 # --- the wrapper: the version of its binary -------------------------------------------------------

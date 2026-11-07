@@ -58,7 +58,8 @@ registry_tags() {
   while [ -n "$path" ] && [ "$pages" -lt 20 ]; do
     : > "$headers"
     body=$(curl -sf ${auth[@]+"${auth[@]}"} -D "$headers" "https://${host}${path}" 2>/dev/null) || break
-    echo "$body" | grep -o '"tags" *: *\[[^]]*\]' | sed 's/^[^[]*\[//;s/\]$//' | tr ',' '\n' | tr -d '" ' | grep -v '^$' || true
+    # on one line: some registries (mcr.microsoft.com) answer with indented JSON
+    echo "$body" | tr -d '\r\n' | grep -o '"tags" *: *\[[^]]*\]' | sed 's/^[^[]*\[//;s/\]$//' | tr ',' '\n' | tr -d '" ' | grep -v '^$' || true
     path=$(tr -d '\r' < "$headers" | grep -i '^link:' | grep -o '<[^>]*>' | head -1 | tr -d '<>' || true)
     pages=$((pages + 1))
   done

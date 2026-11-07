@@ -105,11 +105,11 @@ out=$(cmd_patch --check php --versions 8.3,8.4 --level zero-day --reason-en "Hea
   || fail "patch --check: $out"
 out=$(PATCH_RUNTIMES=all PATCH_LEVEL=critical PATCH_REASON_EN=a PATCH_REASON_TR=b PATCH_DEADLINE_HOURS=12 PATCH_PROMOTE_UNCHANGED=true \
   cmd_patch --check 2>/dev/null) || fail "patch --check from the environment"
-[ "$(jq -c '[.runtimes, .versions, .deadline_at, .promote_unchanged]' <<< "$out")" = '[["python","nodejs","go","php"],"all","2026-10-22T02:30:00Z",true]' ] \
+[ "$(jq -c '[.runtimes, .versions, .deadline_at, .promote_unchanged]' <<< "$out")" = '[["python","nodejs","go","php","java","dotnet","ruby","bun"],"all","2026-10-22T02:30:00Z",true]' ] \
   || fail "patch --check env: $out"
 [ "$(cmd_patch --check php --level security --reason-en a --reason-tr b --promote-unchanged 2>/dev/null | jq -c .promote_unchanged)" = true ] \
   || fail "--promote-unchanged"
-cmd_patch --check ruby --level routine > /dev/null 2>&1 && fail "an unknown runtime passed"
+cmd_patch --check cobol --level routine > /dev/null 2>&1 && fail "an unknown runtime passed"
 cmd_patch --check php python --versions 8.3 --level routine > /dev/null 2>&1 && fail "plain versions for two runtimes passed"
 cmd_patch --check --only go php python --versions php:8.3,python:3.12 --level routine > /dev/null 2>&1 && fail "--only a runtime outside the request passed"
 cmd_patch --check --only python php python --versions php:8.3,python:3.12 --level routine > /dev/null 2>&1 || fail "--only a runtime of the request"

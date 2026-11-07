@@ -20,20 +20,108 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# The language runtimes: `ci.sh build` discovers their versions, builds exec-<id>:<major.minor> on
+# the base image of each (mirrored by `ci.sh mirror-bases`), the patch feed lists their patches.
+#   id|upstream image|tag suffix|lowest version|tag depth|filter|endoflife.date product
+# - upstream image: a Docker Hub repository (library/python, oven/bun) or one with its registry
+#   (mcr.microsoft.com/dotnet/sdk); its tags <version><suffix> are the versions
+# - tag depth: major.minor (python:3.13-slim) or major (eclipse-temurin:21-jdk); a major version
+#   is the runtime version <major>.0 (exec-java:21.0, and eclipse-temurin:21.0-jdk on the reqs
+#   mirror), since RunR's versions and the patch tags are <major>.<minor>
+# - filter: lts-even-major (the newest minor of each even major: Node.js LTS lines), lts (the
+#   cycles endoflife.date marks LTS), released (the cycles endoflife.date lists: no previews or
+#   release candidates), newest-minor (the newest minor of each major: Bun supports only its
+#   latest release); none: every version from the lowest on
+# - endoflife.date product: the EOL check's (default: the id)
 RUNTIME_DEFS=(
-  "python|library/python|-slim|3.10|major.minor"
-  "nodejs|library/node|-slim|20.0|major.minor"
-  "go|library/golang|-alpine|1.22|major.minor"
-  "php|library/php|-cli-alpine|8.2|major.minor"
+  "python|library/python|-slim|3.10|major.minor||python"
+  "nodejs|library/node|-slim|20.0|major.minor|lts-even-major|nodejs"
+  "go|library/golang|-alpine|1.22|major.minor||go"
+  "php|library/php|-cli-alpine|8.2|major.minor||php"
+  "java|library/eclipse-temurin|-jdk|21|major|lts|eclipse-temurin"
+  "dotnet|mcr.microsoft.com/dotnet/sdk||10.0|major.minor|released|dotnet"
+  "ruby|library/ruby|-slim|3.3|major.minor||ruby"
+  "bun|oven/bun|-slim|1.4|major.minor|newest-minor|bun"
 )
 
+# The Ubuntu release of the chiseled runtime-deps image .NET functions run on
+# (mcr.microsoft.com/dotnet/runtime-deps:<version>-<distro>-chiseled-extra, mirrored as
+# dotnet-runtime-deps:<version>-chiseled-extra)
+DOTNET_RUN_DISTRO="${DOTNET_RUN_DISTRO:-resolute}"
+
+# runtime_ids — the ids of the language runtimes, blank-separated
+runtime_ids() {
+  local def ids=""
+  for def in "${RUNTIME_DEFS[@]}"; do
+    ids="${ids:+${ids} }${def%%|*}"
+  done
+  echo "$ids"
+}
+
+# runtime_def ID — the RUNTIME_DEFS entry of a language runtime (status 1: none)
+runtime_def() {
+  local def
+  for def in "${RUNTIME_DEFS[@]}"; do
+    if [ "${def%%|*}" = "$1" ]; then
+      echo "$def"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# runtime_product ID — the endoflife.date product of a language runtime
+runtime_product() {
+  local def runtime repo suffix min_ver depth filter product
+  def="$(runtime_def "$1")" || { echo "$1"; return 0; }
+  IFS='|' read -r runtime repo suffix min_ver depth filter product <<< "$def"
+  echo "${product:-$runtime}"
+}
+
+# base_mirror_name REPO — the name of an upstream image on the reqs mirror: the repository's last
+# segment for Docker Hub (library/python → python, oven/bun → bun), the path with "-" for "/" for
+# an image with its registry (mcr.microsoft.com/dotnet/sdk → dotnet-sdk)
+base_mirror_name() {
+  if registry_qualified "$1"; then
+    local path="${1#*/}"
+    echo "${path//\//-}"
+  else
+    echo "${1##*/}"
+  fi
+}
+
+# runtime_base_images ID VERSION — the base images of a language runtime version on the reqs
+# mirror, one "target|source" per line (the form of REQS_IMAGES): the image its Dockerfile builds
+# on, and for .NET the runtime-deps image its functions run on
+runtime_base_images() {
+  local def runtime repo suffix min_ver depth filter product upstream
+  def="$(runtime_def "$1")" || return 1
+  IFS='|' read -r runtime repo suffix min_ver depth filter product <<< "$def"
+  upstream="$2"
+  if [ "$depth" = major ]; then
+    upstream="${2%%.*}"
+  fi
+  echo "$(base_mirror_name "$repo"):${2}${suffix}|${repo#library/}:${upstream}${suffix}"
+  if [ "$runtime" = dotnet ]; then
+    echo "dotnet-runtime-deps:${2}-chiseled-extra|mcr.microsoft.com/dotnet/runtime-deps:${2}-${DOTNET_RUN_DISTRO}-chiseled-extra"
+  fi
+}
+
+# fetch_tags REPO [SUFFIX] — the tags of an upstream image, blank-separated: from its registry's
+# OCI API for an image with its registry (registry_tags of lib/registry.sh), else from Docker Hub's
+# API (the tags whose name contains SUFFIX, up to 10 pages of 100)
 fetch_tags() {
-  local repo="$1"
+  local repo="$1" suffix="${2:-}"
   local page=1
   local all_tags=""
 
+  if registry_qualified "$repo"; then
+    registry_tags "$(registry_api_host "$repo")" "${repo#*/}" | tr '\n' ' '
+    return 0
+  fi
+
   while true; do
-    local url="https://hub.docker.com/v2/repositories/${repo}/tags/?page=${page}&page_size=100"
+    local url="https://hub.docker.com/v2/repositories/${repo}/tags/?page=${page}&page_size=100${suffix:+&name=${suffix}}"
     local response
     response=$(curl -sf "$url" 2>/dev/null) || break
 
@@ -60,7 +148,7 @@ discover_versions() {
   local repo="$1" suffix="$2" min_ver="$3" depth="$4"
   local raw_tags matched=""
 
-  raw_tags=$(fetch_tags "$repo")
+  raw_tags=$(fetch_tags "$repo" "$suffix")
 
   for tag in $raw_tags; do
     [[ "$tag" == *"${suffix}" ]] || continue
@@ -93,6 +181,86 @@ filter_nodejs_lts() {
 
   for major in $(echo "${!latest_minor[@]}" | tr ' ' '\n' | sort -n); do
     echo "${latest_minor[$major]}"
+  done
+}
+
+# filter_newest_minor VERSIONS — the newest minor of each major (Bun: only its latest release is
+# supported)
+filter_newest_minor() {
+  local versions="$1" ver major
+  local -A newest=()
+  for ver in $versions; do
+    major="${ver%%.*}"
+    if [ -z "${newest[$major]:-}" ] || version_gte "$ver" "${newest[$major]}"; then
+      newest[$major]="$ver"
+    fi
+  done
+  for major in $(echo "${!newest[@]}" | tr ' ' '\n' | sort -n); do
+    echo "${newest[$major]}"
+  done
+}
+
+# eol_cycle PRODUCT VERSION — endoflife.date's JSON of the release cycle of VERSION: its
+# major.minor, else its major (eclipse-temurin 21.0 is cycle 21, dotnet 10.0 cycle 10); nothing
+# when it has none
+eol_cycle() {
+  local product="$1" version="$2" cycle response
+  cycle=$(echo "$version" | grep -oE '^[0-9]+\.[0-9]+') || true
+  if [ -n "$cycle" ]; then
+    response=$(curl -sf "${EOL_API}/${product}/${cycle}.json" 2>/dev/null) || true
+    if [ -n "$response" ]; then
+      echo "$response"
+      return 0
+    fi
+  fi
+  curl -sf "${EOL_API}/${product}/${version%%.*}.json" 2>/dev/null || true
+}
+
+# filter_lts PRODUCT VERSIONS — the versions whose cycle endoflife.date marks LTS ("lts": true, or
+# the date it became one)
+filter_lts() {
+  local product="$1" ver
+  for ver in $2; do
+    if eol_cycle "$product" "$ver" | grep -qE '"lts" *: *(true|"[0-9])'; then
+      echo "$ver"
+    fi
+  done
+}
+
+# filter_released PRODUCT VERSIONS — the versions whose cycle endoflife.date lists: a preview or
+# release candidate has none yet (mcr.microsoft.com/dotnet/sdk:11.0 before .NET 11 is out)
+filter_released() {
+  local product="$1" ver
+  for ver in $2; do
+    if [ -n "$(eol_cycle "$product" "$ver")" ]; then
+      echo "$ver"
+    fi
+  done
+}
+
+# runtime_versions ID — the versions of a language runtime that its upstream image has (from the
+# lowest on, its filter applied), as RunR's runtime versions: major.minor, <major>.0 for a major
+# tag (eclipse-temurin:21-jdk → 21.0); one per line, oldest first. The EOL check is the build's
+# (discover_language_versions).
+runtime_versions() {
+  local def runtime repo suffix min_ver depth filter product versions ver
+  def="$(runtime_def "$1")" || return 1
+  IFS='|' read -r runtime repo suffix min_ver depth filter product <<< "$def"
+  product="${product:-$runtime}"
+  versions=$(discover_versions "$repo" "$suffix" "$min_ver" "$depth")
+  [ -n "$versions" ] || return 0
+  case "$filter" in
+    lts-even-major) versions=$(filter_nodejs_lts "$versions") ;;
+    newest-minor) versions=$(filter_newest_minor "$versions") ;;
+    lts) versions=$(filter_lts "$product" "$versions") ;;
+    released) versions=$(filter_released "$product" "$versions") ;;
+  esac
+  for ver in $versions; do
+    if [ "$depth" = major ]; then
+      echo "${ver}.0"
+    else
+      echo "$ver"
+    fi
   done
 }
 

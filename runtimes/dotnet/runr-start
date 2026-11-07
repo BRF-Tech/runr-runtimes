@@ -1,0 +1,11 @@
+#!/bin/sh
+# runr-start — the image's entrypoint for a local run: the code mounted at /app/code built
+# (runr-build) into /tmp/runr and started. A function RunR builds runs /app/handler on the
+# runtime-deps image instead (run.command of runtime.yaml), without this script.
+set -e
+
+if [ -x /app/handler ]; then
+    exec /app/handler
+fi
+RUNR_BUILD_DIR=/tmp/runr-src /opt/runr/bin/runr-build publish /app/code /tmp/runr >&2
+exec /tmp/runr/handler

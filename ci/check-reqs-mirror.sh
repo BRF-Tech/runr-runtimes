@@ -32,13 +32,17 @@ for entry in "${REQS_IMAGES[@]}"; do
   mirrored["${entry%%|*}"]=1
 done
 
-# A runtime base image of mirror-bases: <name>:<major.minor><suffix> from min_ver on (node: the
-# even, LTS majors)
+# A runtime base image of mirror-bases (runtime_base_images of lib/common.sh): <name>:<major.minor>
+# <suffix> from min_ver on (node: the even, LTS majors), and the runtime-deps image of .NET,
+# dotnet-runtime-deps:<major.minor>-chiseled-extra
 is_base_image() {
-  local ref="$1" def runtime repo suffix min_ver depth name ver
+  local ref="$1" def runtime repo suffix min_ver depth filter product name ver
+  if [[ "$ref" =~ ^dotnet-runtime-deps:([0-9]+\.[0-9]+)-chiseled-extra$ ]]; then
+    ref="dotnet-sdk:${BASH_REMATCH[1]}"
+  fi
   for def in "${RUNTIME_DEFS[@]}"; do
-    IFS='|' read -r runtime repo suffix min_ver depth <<< "$def"
-    name="${repo#library/}"
+    IFS='|' read -r runtime repo suffix min_ver depth filter product <<< "$def"
+    name="$(base_mirror_name "$repo")"
     [[ "$ref" == "${name}:"*"${suffix}" ]] || continue
     ver="${ref#"${name}:"}"
     ver="${ver%"${suffix}"}"

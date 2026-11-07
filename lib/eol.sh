@@ -31,9 +31,10 @@ cmd_eol() {
   echo -e "${BOLD}$(date +%Y-%m-%d)${NC}"
   echo ""
 
-  local def runtime rest
+  local def runtime rest product
   for def in "${RUNTIME_DEFS[@]}"; do
     IFS='|' read -r runtime rest <<< "$def"
+    product="$(runtime_product "$runtime")"
     local repo="exec-${runtime}"
     echo -e "${BOLD}── ${REGISTRY}/${repo} ──${NC}"
 
@@ -49,7 +50,7 @@ cmd_eol() {
     local tag
     for tag in $tags; do
       local result
-      result=$(check_eol "$runtime" "$tag")
+      result=$(check_eol "$product" "$tag")
       local status="${result%%|*}"
       local eol_date="${result#*|}"
       [ "$status" = "$result" ] && eol_date="?"

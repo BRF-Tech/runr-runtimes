@@ -1,0 +1,26 @@
+#!/bin/sh
+# runr-build [SRC] [OUT] — RunR's build of a Java function, the runtime's build.command (and what
+# runr-start runs for code mounted at /app/code): every .java file below SRC (default /build/code)
+# compiled with javac into OUT/classes (default /build/out), with the handler server's classes
+# and the jars of OUT/lib (the dependencies of pom.xml, runr-deps) on the classpath. Annotation
+# processors on that classpath run (Lombok, MapStruct, …). The files of SRC/src/main/resources are
+# copied next to the classes. Writes only to OUT and a temporary file: SRC may be read-only.
+set -eu
+
+src="${1:-/build/code}"
+out="${2:-/build/out}"
+mkdir -p "$out/classes" "$out/lib"
+
+sources="$(mktemp)"
+trap 'rm -f "$sources"' EXIT
+find "$src" -type f -name '*.java' ! -path '*/target/*' | sort | sed 's/.*/"&"/' > "$sources"
+if [ ! -s "$sources" ]; then
+    echo "runr-build: no .java file in ${src}" >&2
+    exit 1
+fi
+
+javac -encoding UTF-8 -nowarn -proc:full -d "$out/classes" -cp "/opt/runr/classes:$out/lib/*" "@$sources"
+
+if [ -d "$src/src/main/resources" ]; then
+    cp -R "$src/src/main/resources/." "$out/classes/"
+fi

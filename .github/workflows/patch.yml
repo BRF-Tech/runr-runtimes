@@ -1,5 +1,5 @@
 # Patches the language runtime images on request: a zero-day (or another security fix) in PHP,
-# Node.js, Python, Go or their base images. The owner asks for a patch; the operator runs this
+# Node.js, Python, Go, Java, .NET, Ruby, Bun or their base images. The owner asks for a patch; the operator runs this
 # workflow (Actions → Patch runtime images → Run workflow, or gh workflow run patch.yml -f …).
 #   1. request: the inputs checked (ci.sh patch --check), the deadline fixed for every image
 #   2. bases: the base images mirrored again (ci.sh mirror-bases), so the builds get upstream's
@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       runtimes:
-        description: 'Runtimes: php nodejs python go (blank- or comma-separated) or "all"'
+        description: 'Runtimes: php nodejs python go java dotnet ruby bun (blank- or comma-separated) or "all"'
         required: true
         default: php
       versions:
@@ -144,6 +144,10 @@ jobs:
       nodejs: ${{ steps.results.outputs.nodejs }}
       go: ${{ steps.results.outputs.go }}
       php: ${{ steps.results.outputs.php }}
+      java: ${{ steps.results.outputs.java }}
+      dotnet: ${{ steps.results.outputs.dotnet }}
+      ruby: ${{ steps.results.outputs.ruby }}
+      bun: ${{ steps.results.outputs.bun }}
     steps:
       # the history: SOURCE_DATE_EPOCH of a build is the time of the last commit of its directory
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

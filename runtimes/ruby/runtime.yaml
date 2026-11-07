@@ -1,0 +1,42 @@
+# Built-in runtime: Ruby. server.rb serves the RunR HTTP contract and runs a scheduled invocation
+# once (RUNR_MODE=schedule). A Gemfile triggers a dependency build: Bundler installs the gems into
+# /app/gems of the function's image, standalone (runr-bundle).
+apiVersion: runr.sh/v1
+kind: Runtime
+id: ruby
+name: Ruby
+description: CRuby with the RunR handler server — def handler(event, context), or handler(event:, context:) as on AWS Lambda.
+language: ruby
+extensions: [rb]
+category: general
+versionDiscovery:
+  repository: ghcr.io/brf-tech/runr/exec-ruby
+  image: "ghcr.io/brf-tech/runr/exec-ruby:{version}"
+  eol: ruby
+handler:
+  file: main
+  function: handler
+  pattern: 'def\s+(?:self\.)?{handler}\b'
+template:
+  files:
+    "{file}": |-
+      def {handler}(event, context)
+        { statusCode: 200, body: "Hello, World!" }
+      end
+dependencies:
+  file: Gemfile
+  template: "source \"https://rubygems.org\"\n\ngem \"redis\", \"~> 6.0\"\n"
+  install: /opt/runr/bin/runr-bundle /build/code /build/gems
+  copy:
+    - { from: /build/gems, to: /app/gems }
+  env:
+    RUNR_BUNDLE_SETUP: /app/gems/vendor/bundler/setup.rb
+    BUNDLE_GEMFILE: /app/gems/Gemfile
+    BUNDLE_PATH: /app/gems/vendor
+    BUNDLE_WITHOUT: "development:test"
+    BUNDLE_FROZEN: "true"
+run:
+  mode: http
+  schedule: native
+triggers: [http, schedule, queue]
+sandbox: [runc, gvisor, kata]

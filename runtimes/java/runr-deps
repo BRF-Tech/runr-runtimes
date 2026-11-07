@@ -1,0 +1,14 @@
+#!/bin/sh
+# runr-deps [POM] [OUT] — the dependencies of a Java function, the runtime's dependencies.install:
+# the compile and runtime dependencies of POM (default /build/code/pom.xml), with everything they
+# depend on, copied as jars into OUT/lib (default /build/out/lib) by Maven's dependency plugin,
+# which the image carries in its local repository (~/.m2). Maven writes nothing next to POM.
+set -eu
+
+pom="${1:-/build/code/pom.xml}"
+out="${2:-/build/out}"
+mkdir -p "$out/lib"
+
+mvn --batch-mode --quiet --no-transfer-progress -f "$pom" \
+    "org.apache.maven.plugins:maven-dependency-plugin:${RUNR_MAVEN_DEPENDENCY_PLUGIN}:copy-dependencies" \
+    -DincludeScope=runtime -DoutputDirectory="$out/lib"

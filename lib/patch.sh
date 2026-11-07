@@ -42,7 +42,7 @@
 # workflow, a person's decision).
 
 PATCH_KEEP="${PATCH_KEEP:-5}"
-PATCH_LANGUAGE_RUNTIMES="python nodejs go php"
+PATCH_LANGUAGE_RUNTIMES="python nodejs go php java dotnet ruby bun"
 
 # The request of the patches being built (patch_request_reset / cmd_patch, patch_request_check)
 PATCH_REQ_LEVEL=""
@@ -128,6 +128,10 @@ patch_upstream() {
     nodejs) echo "Node.js $2" ;;
     python) echo "Python $2" ;;
     go) echo "Go $2" ;;
+    java) echo "Eclipse Temurin $2" ;;
+    dotnet) echo ".NET $2" ;;
+    ruby) echo "Ruby $2" ;;
+    bun) echo "Bun $2" ;;
     *) echo "$1 $2" ;;
   esac
 }
@@ -615,13 +619,14 @@ cmd_patch() {
     fi
   done
   for word in ${expanded[@]+"${expanded[@]}"}; do
-    case "$word" in
-      python|nodejs|go|php) [[ " ${selected[*]-} " == *" ${word} "* ]] || selected+=("$word") ;;
-      *) echo -e "${RED}unknown runtime: ${word} (python, nodejs, go, php, all)${NC}"; return 1 ;;
-    esac
+    if [[ " ${PATCH_LANGUAGE_RUNTIMES} " != *" ${word} "* ]]; then
+      echo -e "${RED}unknown runtime: ${word} (${PATCH_LANGUAGE_RUNTIMES// /, }, all)${NC}"
+      return 1
+    fi
+    [[ " ${selected[*]-} " == *" ${word} "* ]] || selected+=("$word")
   done
   if [ "${#selected[@]}" -eq 0 ]; then
-    echo -e "${RED}no runtime to patch (python, nodejs, go, php, all)${NC}"
+    echo -e "${RED}no runtime to patch (${PATCH_LANGUAGE_RUNTIMES// /, }, all)${NC}"
     return 1
   fi
 

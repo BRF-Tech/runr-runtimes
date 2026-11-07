@@ -1,0 +1,58 @@
+# Built-in runtime: .NET (C#). Compiled: every version is built with the version's SDK
+# (runr-build) — the project's .cs files, its Function.csproj with the NuGet packages it names and
+# the RunR handler server (host/RunrHost.cs) — into a self-contained application, /app/handler,
+# on Microsoft's chiseled runtime-deps image (no shell, user app 1654). The application serves the
+# RunR HTTP contract and runs a scheduled invocation once (RUNR_MODE=schedule).
+apiVersion: runr.sh/v1
+kind: Runtime
+id: dotnet
+name: .NET (C#)
+description: C# on .NET with the RunR handler server — public static object Handler(JsonNode? input, IDictionary<string, object?> context).
+language: csharp
+extensions: [cs]
+category: general
+versionDiscovery:
+  repository: ghcr.io/brf-tech/runr/exec-dotnet
+  image: "ghcr.io/brf-tech/runr/exec-dotnet:{version}"
+  eol: dotnet
+handler:
+  file: Function
+  function: Handler
+  pattern: '\b{handler}\s*\('
+template:
+  files:
+    "{file}": |-
+      using System.Collections.Generic;
+      using System.Text.Json.Nodes;
+
+      public static class Function
+      {
+          public static object {handler}(JsonNode? input, IDictionary<string, object?> context)
+          {
+              return new { statusCode = 200, body = "Hello, World!" };
+          }
+      }
+dependencies:
+  file: Function.csproj
+  template: |
+    <Project Sdk="Microsoft.NET.Sdk">
+      <PropertyGroup>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+      </PropertyGroup>
+      <ItemGroup>
+        <PackageReference Include="StackExchange.Redis" Version="3.4.31" />
+      </ItemGroup>
+    </Project>
+  install: /opt/runr/bin/runr-build restore /build/code /build/out
+build:
+  image: "{image}"
+  command: /opt/runr/bin/runr-build publish /build/code /build/out
+  runImage: "ghcr.io/brf-tech/runr/reqs/dotnet-runtime-deps:{version}-chiseled-extra"
+  source: false
+run:
+  mode: http
+  schedule: native
+  command: ["/app/handler"]
+triggers: [http, schedule, queue]
+sandbox: [runc, gvisor, kata]

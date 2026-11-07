@@ -99,7 +99,8 @@ smoke() {
 }
 
 # --- the language runtimes ---------------------------------------------------------------------
-for spec in python:3.12:3.12.7:main.py nodejs:22.22:22.22.0:main.js php:8.4:8.4.13:main.php go:1.26:1.26.2:main.go; do
+for spec in python:3.12:3.12.7:main.py nodejs:22.22:22.22.0:main.js php:8.4:8.4.13:main.php go:1.26:1.26.2:main.go \
+  java:21.0:21.0.13:Main.java dotnet:10.0:10.0.14:Function.cs ruby:3.4:3.4.12:main.rb bun:1.4:1.4.4:main.ts; do
   IFS=: read -r runtime version reported file <<< "$spec"
   lang_version="$reported" sum=42 status=200 schedule_trigger=schedule
   smoke "$runtime" "$version" || { cat "$tmp/out"; fail "${runtime}: a working image failed"; }

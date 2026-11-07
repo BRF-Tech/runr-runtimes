@@ -14,7 +14,8 @@
 #   ci/images.sh command KEY                the ci.sh arguments that build KEY (without --push)
 #   ci/images.sh json KEY...                the keys as a JSON array (a workflow matrix)
 #
-# Keys: python nodejs go php (exec-<runtime>, every version ci.sh build discovers), wrapper,
+# Keys: python nodejs go php java dotnet ruby bun (exec-<runtime>, every version ci.sh build
+# discovers), wrapper,
 # wasm-rust wasm-go wasm-js wasm-python wasm-exec, pytorch tensorflow (the CPU images), hf-serve
 # (CPU) — the "cpu" keys of the publish workflow — and pytorch-gpu tensorflow-gpu hf-serve-cuda,
 # the "gpu" keys of the heavy-images workflow.
@@ -28,9 +29,9 @@
 # itself — run the publish workflow for the images it should rebuild.
 set -euo pipefail
 
-CPU_KEYS="python nodejs go php wrapper wasm-rust wasm-go wasm-js wasm-python wasm-exec pytorch tensorflow hf-serve"
+CPU_KEYS="python nodejs go php java dotnet ruby bun wrapper wasm-rust wasm-go wasm-js wasm-python wasm-exec pytorch tensorflow hf-serve"
 GPU_KEYS="pytorch-gpu tensorflow-gpu hf-serve-cuda"
-LANGUAGE_KEYS="python nodejs go php"
+LANGUAGE_KEYS="python nodejs go php java dotnet ruby bun"
 
 usage() {
   sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
@@ -45,6 +46,7 @@ keys_of_path() {
     wrapper/*_test.go) return 0 ;;
     hf-serve/tests/*|hf-serve/requirements-test.txt) return 0 ;;
     runtimes/python/runtime.yaml|runtimes/nodejs/runtime.yaml|runtimes/go/runtime.yaml|runtimes/php/runtime.yaml) return 0 ;;
+    runtimes/java/runtime.yaml|runtimes/dotnet/runtime.yaml|runtimes/ruby/runtime.yaml|runtimes/bun/runtime.yaml) return 0 ;;
     runtimes/pytorch/runtime.yaml|runtimes/tensorflow/runtime.yaml) return 0 ;;
   esac
   case "$path" in
@@ -54,6 +56,10 @@ keys_of_path() {
     runtimes/nodejs/*) echo nodejs ;;
     runtimes/go/*) echo go ;;
     runtimes/php/*) echo php ;;
+    runtimes/java/*) echo java ;;
+    runtimes/dotnet/*) echo dotnet ;;
+    runtimes/ruby/*) echo ruby ;;
+    runtimes/bun/*) echo bun ;;
     runtimes/pytorch/*) printf '%s\n' pytorch pytorch-gpu ;;
     runtimes/tensorflow/*) printf '%s\n' tensorflow tensorflow-gpu ;;
     runtimes/wasm-rust/*) echo wasm-rust ;;
@@ -137,7 +143,7 @@ cmd_list() {
 
 cmd_command() {
   case "${1:-}" in
-    python|nodejs|go|php) echo "build $1" ;;
+    python|nodejs|go|php|java|dotnet|ruby|bun) echo "build $1" ;;
     wrapper) echo "wrapper" ;;
     wasm-rust|wasm-go|wasm-js|wasm-python|wasm-exec) echo "wasm ${1#wasm-}" ;;
     pytorch|tensorflow) echo "ml-runtimes $1 cpu" ;;

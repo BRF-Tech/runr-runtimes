@@ -1,0 +1,21 @@
+#!/bin/sh
+# runr-start — the process of a Java function (run.command, and the image's entrypoint): the RunR
+# handler server (sh.runr.runtime.Server) with the function's classes on the classpath. A built
+# function has them in /app/classes and /app/lib (runr-build, runr-deps); code mounted at
+# /app/code (a local run of the image) is built into /tmp/runr first.
+set -e
+
+app=/app
+if [ ! -d /app/classes ]; then
+    app=/tmp/runr
+    if [ -f /app/code/pom.xml ]; then
+        /opt/runr/bin/runr-deps /app/code/pom.xml "$app" >&2
+    fi
+    /opt/runr/bin/runr-build /app/code "$app" >&2
+fi
+
+# The heap may use 75% of the container's memory limit (the JVM's default is 25%); an
+# OutOfMemoryError ends the process, so the platform restarts it; no hsperfdata file in /tmp.
+# JAVA_TOOL_OPTIONS and JDK_JAVA_OPTIONS of the project add to these.
+exec java -XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -XX:-UsePerfData \
+    -cp "/opt/runr/classes:${app}/classes:${app}/lib/*" sh.runr.runtime.Server
