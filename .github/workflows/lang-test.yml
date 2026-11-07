@@ -1,16 +1,22 @@
 # The language bot's tests (README.md, The language bot): after every run of Language releases and
 # by hand, each open issue "lang: <name> <version> released" without a result is tested:
-#   - a language runtime (python, nodejs, go, php): the image of that version built and
-#     smoke-tested (the base images mirrored first), this repository's tests, then RunR's main e2e
-#     (its last release, ci.sh test on Kind) with the image as the only version of that runtime;
+#   - a language runtime (RUNTIME_DEFS of lib/common.sh: python, nodejs, go, php, java, dotnet,
+#     ruby, bun): the image of that version built and smoke-tested (the base images mirrored
+#     first), this repository's tests, then RunR's main e2e (its last release, ci.sh test on Kind)
+#     with the image as the only version of that runtime;
+#   - a tool a language image pins (maven, maven-dependency-plugin: exec-java): its ARG moved (and
+#     the SHA-512 of its download), every version of the image built and smoke-tested, this
+#     repository's tests, then RunR's main e2e on the newest version;
 #   - an ML runtime (pytorch, tensorflow): the framework pin moved, the CPU image built and
 #     smoke-tested, this repository's tests, then RunR's main e2e with its ML case (--ml) on it;
 #   - a WebAssembly toolchain (spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk,
 #     rust): its ARG and download checksums moved (rust, tinygo: their mirrored base image too),
 #     the images that have it built and smoke-tested, this repository's tests, then RunR's suites
 #     that deploy those images (ci.sh test-wasm, test-images).
-# A language or ML candidate is pushed as ghcr.io/brf-tech/runr/candidates/exec-<runtime>:<full>,
-# which RunR never discovers by itself, and RunR's catalog of the e2e names it; a WebAssembly
+# A language or ML candidate is pushed as ghcr.io/brf-tech/runr/candidates/exec-<runtime>:<full>
+# (a tool's as exec-<image>:<full>-<tool>-<release>), which RunR never discovers by itself, and
+# RunR's catalog of the e2e names it; a runtime RunR's last release does not have yet skips the
+# e2e (the build and the smoke test decide) until RunR's next release brings it; a WebAssembly
 # candidate as ghcr.io/brf-tech/runr/candidates/exec-wasm-<lang>:<version>-<tool>-<release>, loaded
 # under its published name (RUNTIME_IMAGES_LOCAL=1).
 # Green: committed on main as a fast-forward (tested-versions, or the pin), the publish workflow
@@ -138,7 +144,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - run: pip install check-jsonschema==0.38.2
+      - run: pip install check-jsonschema==0.38.2 PyYAML==6.0.3
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -170,6 +176,30 @@ jobs:
           echo "$RUNTIME" > "$RUNNER_TEMP/result/images"
           # the versions published now: a version without a tag is a new one
           crane ls "ghcr.io/brf-tech/runr/exec-${RUNTIME}" | grep -xE '[0-9]+\.[0-9]+' > "$RUNNER_TEMP/result/published" || true
+      # a tool of a language image: its ARG (and checksum) moved, every version of the image built
+      # and smoke-tested, the newest pushed as the candidate (RunR's default version)
+      - name: Move the tool, build, smoke test and push the candidate (a tool of a language image)
+        if: matrix.kind == 'tool'
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/result"
+          bash ci/lang-bot.sh tool-bump "$RUNTIME" "$FULL" > "$RUNNER_TEMP/bump.json"
+          jq -r .pin "$RUNNER_TEMP/bump.json" | tee "$RUNNER_TEMP/result/pin"
+          git diff > "$RUNNER_TEMP/result/pin.patch"
+          image="$(jq -r .image "$RUNNER_TEMP/bump.json")"
+          ./ci.sh mirror-bases 2>&1 | tail -n 20 | tee -a "$RUNNER_TEMP/build.log"
+          BUILD_REPORT="$RUNNER_TEMP/built" ./ci.sh build "$image" 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          newest="$(awk -v r="$image" '$1 == r { print $2, $3 }' "$RUNNER_TEMP/built" | sort -V | tail -n 1)"
+          version="${newest%% *}"
+          built="${newest#* }"
+          [ -n "$version" ] && [ -n "$built" ] || { echo "no version of ${image} was built" | tee -a "$RUNNER_TEMP/build.log"; exit 1; }
+          candidate="${CANDIDATES}/exec-${image}:${built}-${RUNTIME}-${FULL}"
+          docker tag "ghcr.io/brf-tech/runr/exec-${image}:${version}" "$candidate"
+          docker push -q "$candidate" | tee -a "$RUNNER_TEMP/build.log"
+          echo "$candidate" > "$RUNNER_TEMP/result/image"
+          echo "$image" > "$RUNNER_TEMP/result/images"
+          echo "$image" > "$RUNNER_TEMP/result/runtime"
+          echo "$version" > "$RUNNER_TEMP/result/version"
       # an ML framework: the pin moved, the CPU image built, smoke-tested and pushed as the candidate
       - name: Move the pin, build, smoke test and push the candidate (ML)
         if: matrix.kind == 'ml'
@@ -273,26 +303,46 @@ jobs:
         with:
           name: lang-result-${{ matrix.key }}-build
           path: ${{ runner.temp }}/build
-      # the candidate where RunR's e2e takes it: in its catalog (a language, an ML runtime), or the
-      # build images under their published names (a WebAssembly toolchain, RUNTIME_IMAGES_LOCAL=1)
+      # the candidate where RunR's e2e takes it: in its catalog (a language, a tool's image, an ML
+      # runtime), or the build images under their published names (a WebAssembly toolchain,
+      # RUNTIME_IMAGES_LOCAL=1)
       - name: The candidate in RunR
         id: candidate
+        env:
+          RUNR_TAG: ${{ needs.plan.outputs.runr-tag }}
         run: |
           mkdir -p "$RUNNER_TEMP/result"
           if [ "$(cat "$RUNNER_TEMP/build/status")" != success ]; then
             echo "the build failed: no candidate to deploy" | tee "$RUNNER_TEMP/e2e.log"
             exit 1
           fi
+          # the runtime and version the e2e deploys: a tool's are its image's newest version
+          runtime="$RUNTIME" version="$VERSION"
+          if [ "$BOT_KIND" = tool ]; then
+            runtime="$(cat "$RUNNER_TEMP/build/runtime")"
+            version="$(cat "$RUNNER_TEMP/build/version")"
+          fi
+          { echo "E2E_RUNTIME=${runtime}"; echo "E2E_VERSION=${version}"; } >> "$GITHUB_ENV"
           case "$BOT_KIND" in
-            language|ml)
+            language|tool|ml)
               # RunR's release before its ML case (test:e2e --ml) has none to run
               if [ "$SUITE" = test-ml ] && ! grep -qF -- '{--ml ' runr/api/app/Console/Commands/E2eTestCommand.php; then
                 echo "skipped" > "$RUNNER_TEMP/result/status"
-                echo "RunR ${{ needs.plan.outputs.runr-tag }} has no ML case yet (test:e2e --ml): it comes with its next release" > "$RUNNER_TEMP/result/reason"
+                echo "RunR ${RUNR_TAG} has no ML case yet (test:e2e --ml): it comes with its next release" > "$RUNNER_TEMP/result/reason"
                 echo "skip=true" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
-              bash runtimes-repo/ci/lang-bot.sh catalog runr "$RUNTIME" "$VERSION" "$(cat "$RUNNER_TEMP/build/image")"
+              # a runtime RunR's release does not have yet (it comes with its next release): no e2e
+              # can deploy it, the build and the smoke test decide
+              rc=0
+              bash runtimes-repo/ci/lang-bot.sh catalog runr "$runtime" "$version" "$(cat "$RUNNER_TEMP/build/image")" || rc=$?
+              if [ "$rc" = 3 ]; then
+                echo "skipped" > "$RUNNER_TEMP/result/status"
+                echo "RunR ${RUNR_TAG} has no ${runtime} runtime yet: it comes with its next release" > "$RUNNER_TEMP/result/reason"
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              [ "$rc" = 0 ] || exit "$rc"
               git -C runr diff --stat ;;
             wasm)
               while read -r candidate published; do
@@ -342,7 +392,7 @@ jobs:
           for f in api/storage/e2e-results-*.md; do
             cat "$f" >> "$GITHUB_STEP_SUMMARY"
             case "$BOT_KIND" in
-              language) bash ../runtimes-repo/ci/lang-bot.sh check-e2e "$f" "$RUNTIME" "$VERSION" | tee -a "$RUNNER_TEMP/e2e.log" ;;
+              language|tool) bash ../runtimes-repo/ci/lang-bot.sh check-e2e "$f" "$E2E_RUNTIME" "$E2E_VERSION" | tee -a "$RUNNER_TEMP/e2e.log" ;;
               ml) bash ../runtimes-repo/ci/lang-bot.sh check-e2e "$f" "$RUNTIME" "$VERSION" --ml | tee -a "$RUNNER_TEMP/e2e.log" ;;
             esac
           done
@@ -398,12 +448,19 @@ jobs:
           echo "$TESTS" > "$RUNNER_TEMP/lang/tests.json"
           jq -c '.[]' "$RUNNER_TEMP/lang/tests.json" | while read -r t; do
             runtime=$(jq -r .runtime <<< "$t")
-            if [ "$(jq -r .kind <<< "$t")" = wasm ]; then
+            kind=$(jq -r .kind <<< "$t")
+            rc=0
+            if [ "$kind" = wasm ]; then
               echo "the images keep their version, which RunR ${RUNR_TAG} pins (WASM_RUNTIME_VERSION): nothing to move" > "$RUNNER_TEMP/lang/pins/${runtime}"
-            elif out="$(bash ci/lang-bot.sh runr-pins .runr-release "$runtime")"; then
-              echo "RunR ${RUNR_TAG} pins no version of ${runtime}: it discovers them in the registry, nothing to move" > "$RUNNER_TEMP/lang/pins/${runtime}"
+            elif [ "$kind" = tool ]; then
+              echo "a tool inside the image, which RunR ${RUNR_TAG} does not pin: nothing to move" > "$RUNNER_TEMP/lang/pins/${runtime}"
             else
-              echo "RunR ${RUNR_TAG} pins ${out}: a person moves them (runtimes:bundle)" > "$RUNNER_TEMP/lang/pins/${runtime}"
+              out="$(bash ci/lang-bot.sh runr-pins .runr-release "$runtime")" || rc=$?
+              case "$rc" in
+                0) echo "RunR ${RUNR_TAG} pins no version of ${runtime}: it discovers them in the registry, nothing to move" ;;
+                3) echo "RunR ${RUNR_TAG} has no ${runtime} runtime yet: its next release brings it and discovers its versions in the registry, nothing to move" ;;
+                *) echo "RunR ${RUNR_TAG} pins ${out}: a person moves them (runtimes:bundle)" ;;
+              esac > "$RUNNER_TEMP/lang/pins/${runtime}"
             fi
             cat "$RUNNER_TEMP/lang/pins/${runtime}"
           done

@@ -41,8 +41,10 @@ Some rules:
   such a change in the pull request; the copy a RunR release ships is updated with
   `php artisan runtimes:bundle` (see [README.md](README.md#the-catalog-manifests)).
 - **A new runtime** is a directory `runtimes/<id>/` with its manifest (`id` = the directory's
-  name), Dockerfile and handler server, an image key in `ci/images.sh`, and the runtime count of
-  `test/catalog_test.sh` raised. See
+  name), Dockerfile and handler server, an image key in `ci/images.sh`, and the runtime counts of
+  `test/catalog_test.sh` and `test/catalog_artifact_test.sh` raised. A language runtime also gets
+  its line in `RUNTIME_DEFS` (`lib/common.sh`: the build, `ci.sh watch` and the language bot read
+  it) and its `runtimes/<id>/tested-versions`. See
   [README.md](README.md#a-new-runtime-without-a-runr-release).
 - **A new version.** When installs should get the change as a new version, raise the version with
   it: the wrapper's `const version`, hf-serve's `__version__`, or a WebAssembly runtime's `version`.

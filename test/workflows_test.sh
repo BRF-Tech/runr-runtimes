@@ -7,9 +7,11 @@
 #   - lang-test.yml runs after it and by hand, never on a push or a pull request; it is the only
 #     workflow that writes contents, and its one push is ci/lang-bot.sh's
 #     `git push -q origin HEAD:refs/heads/main` (no other refspec, tag, deletion or force); it
-#     tests the languages, the ML runtimes and the WebAssembly toolchains with RunR's public last
-#     release, and nothing of RunR's private repository: no deploy key, no origin;
-#   - the publish workflow holds an untested language version (LANG_GATE).
+#     tests the languages, the tools of their images, the ML runtimes and the WebAssembly
+#     toolchains with RunR's public last release (a runtime that release lacks skips its e2e), and
+#     nothing of RunR's private repository: no deploy key, no origin;
+#   - the publish workflow holds an untested language version (LANG_GATE), every language runtime
+#     has its tested-versions.
 #
 #   bash test/workflows_test.sh
 # shellcheck disable=SC2016 # the workflows' text, not this shell's variables
@@ -87,6 +89,13 @@ grep -qF 'gh release view --repo "$RUNR_REPOSITORY"' "$lt" || fail "lang-test.ym
 for suite in 'test) bash runtime/ci.sh test --skip-sandbox' 'test-ml) TEST_E2E_EXTRA_ARGS=--ml bash runtime/ci.sh test --skip-sandbox' 'test-wasm|test-images) bash runtime/ci.sh "$SUITE"'; do
   grep -qF -- "$suite" "$lt" || fail "lang-test.yml does not run RunR's ${suite%%)*}"
 done
+# every kind of test is built: a language version, a tool of a language image, an ML framework, a
+# WebAssembly toolchain; a runtime RunR's last release does not have yet skips its e2e
+for kind in language tool ml wasm; do
+  grep -qF "if: matrix.kind == '${kind}'" <<<"$(job "$lt" build)" || fail "lang-test.yml builds no ${kind} candidate"
+done
+grep -qF 'bash ci/lang-bot.sh tool-bump "$RUNTIME" "$FULL"' "$lt" || fail "lang-test.yml does not move a tool's pin through ci/lang-bot.sh"
+grep -qF 'runtime yet: it comes with its next release' <<<"$(job "$lt" e2e)" || fail "lang-test.yml's e2e does not skip a runtime RunR's release lacks"
 # the one push: HEAD:refs/heads/main of this repository, a fast-forward
 bot="$here/ci/lang-bot.sh"
 gitcmd='^[^#]*(^|[^A-Za-z_-])git( -[cC] [^ ]+)*'
@@ -99,7 +108,10 @@ echo "ok - lang-test.yml: after the watch and by hand, contents: write in its la
 # --- the publish gate -------------------------------------------------------------------------------
 grep -qF "LANG_GATE: '1'" <<<"$(job "$wfdir/publish.yml" publish)" || fail "publish.yml publishes untested language versions (no LANG_GATE)"
 grep -q 'LANG_GATE' "$wfdir/patch.yml" && fail "patch.yml holds a person's patch"
-for rt in python nodejs go php; do
+# every language runtime ci.sh builds (RUNTIME_DEFS) has the file the gate reads
+languages="$(SCRIPT_DIR="$here" bash -c 'source "$0/lib/common.sh" && runtime_ids' "$here")"
+[[ " ${languages} " == *" java dotnet ruby bun "* ]] || fail "the language runtimes: ${languages}"
+for rt in $languages; do
   [ -f "$here/runtimes/$rt/tested-versions" ] || fail "no runtimes/${rt}/tested-versions"
 done
 echo "ok - the publish workflow holds an untested language version; the patch workflow never"

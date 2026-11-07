@@ -42,10 +42,11 @@ show it private, set it to public there.
 
 The language bot (`lang-test.yml`) pushes the images it tests under `ghcr.io/brf-tech/runr/candidates/`:
 `exec-<runtime>:<full version>` for a language or an ML framework (packages
-`runr/candidates/exec-python`, `-nodejs`, `-go`, `-php`, `-pytorch`, `-tensorflow`), and
-`exec-wasm-<lang>:<version>-<tool>-<release>` for a WebAssembly toolchain (`runr/candidates/exec-wasm-exec`,
-`-wasm-go`, `-wasm-js`, `-wasm-python`, `-wasm-rust`). The workflow creates each package on its
-first test, public like this repository. RunR's e2e pulls them from there; RunR never discovers
+`runr/candidates/exec-python`, `-nodejs`, `-go`, `-php`, `-java`, `-dotnet`, `-ruby`, `-bun`,
+`-pytorch`, `-tensorflow`), `exec-java:<full version>-<tool>-<release>` for a tool of the Java
+image (Maven, its dependency plugin), and `exec-wasm-<lang>:<version>-<tool>-<release>` for a
+WebAssembly toolchain (`runr/candidates/exec-wasm-exec`, `-wasm-go`, `-wasm-js`, `-wasm-python`,
+`-wasm-rust`). The workflow creates each package on its first test, public like this repository. RunR's e2e pulls them from there; RunR never discovers
 versions in that namespace.
 Its tags are test artifacts: they may be deleted at any time.
 

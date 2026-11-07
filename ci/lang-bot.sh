@@ -5,12 +5,14 @@
 #   ci/lang-bot.sh plan ISSUES.json [--only=N,…]
 #       which issues of lang-releases.yml (`ci.sh watch`) this run tests: JSON {tests: [{issue,
 #       kind, runtime, version, full, key, suites}], superseded: [{issue, by}], retrigger: [issue],
-#       skipped: [{issue, reason}], attention: []}. kind "language" (python, nodejs, go, php:
-#       version is the major.minor, full the release), "ml" (pytorch, tensorflow: the framework
-#       release; version its major.minor, the image's tag) or "wasm" (a toolchain of the
-#       WebAssembly images: spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk,
-#       rust). suites: RunR's e2e suites the test runs (see SUITES). Of several open issues of one
-#       image (a language version, an ML runtime, a toolchain) the newest is tested, the older ones
+#       skipped: [{issue, reason}], attention: []}. kind "language" (the runtimes of RUNTIME_DEFS
+#       in lib/common.sh: python, nodejs, go, php, java, dotnet, ruby, bun; version is the
+#       major.minor, full the release), "tool" (a tool a language image pins, LANG_TOOL_DEFS:
+#       maven, maven-dependency-plugin; version and full its release), "ml" (pytorch, tensorflow:
+#       the framework release; version its major.minor, the image's tag) or "wasm" (a toolchain of
+#       the WebAssembly images: spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk,
+#       rust). suites: RunR's e2e suites the test runs. Of several open issues of one image (a
+#       language version, a tool, an ML runtime, a toolchain) the newest is tested, the older ones
 #       superseded. An end-of-life notice is for people (skipped), an issue labelled "lang: passed"
 #       is done, one labelled "needs attention" waits unless the run names it (--only), which takes
 #       the label off.
@@ -23,35 +25,62 @@
 #       release assets; zig: ziglang.org's index), the reqs mirror's base image (rust, tinygo:
 #       REQS_IMAGES of lib/mirror.sh). Prints JSON {pin, images, mirror}: the images (keys of
 #       ci/images.sh) it changes, the reqs images to mirror before they build
+#   ci/lang-bot.sh tool-bump TOOL VERSION
+#       a tool of a language image moved to VERSION in this checkout: its ARG in
+#       runtimes/<image>/Dockerfile and, for a download, the SHA-512 of it, which must be the one
+#       published next to it (<download>.sha512). Prints JSON {pin, image, images}
 #   ci/lang-bot.sh tested RUNTIME VERSION FULL
 #       "VERSION FULL" into runtimes/RUNTIME/tested-versions (the publish gate, lib/patch.sh)
+#   ci/lang-bot.sh lifecycle RUNTIME VERSION
+#       VERSION deprecated from today (LANG_TODAY) with its sunset LANG_SUNSET_DAYS later (default
+#       91: 13 weeks, when RunR sends its first reminder), in versionDiscovery.lifecycle of
+#       runtimes/RUNTIME/runtime.yaml; prints "VERSION: deprecated DATE, sunset DATE". Exit 3: the
+#       version has an entry already, which stays. The landing runs it for the published versions
+#       below a new one of a runtime that supports only its newest release (filter newest-minor:
+#       Bun)
 #   ci/lang-bot.sh catalog RUNR RUNTIME VERSION IMAGE
 #       a checkout of BRF-Tech/runr (RUNR) offers RUNTIME at VERSION alone, with IMAGE (its
 #       built-in catalog api/resources/runtimes/builtin.json), and no other runtime but Python
 #       (EXECUTOR_RUNTIMES of api/.env.docker): RunR's main e2e then deploys its functions on the
-#       candidate image
+#       candidate image. Exit 3: RunR's catalog has no RUNTIME (a release before the runtime's)
 #   ci/lang-bot.sh check-e2e RESULTS.md RUNTIME VERSION [--ml]
 #       the e2e's results show the xaas cases of RUNTIME at VERSION (--ml: its ML case), and none
 #       of them failed
 #   ci/lang-bot.sh runr-pins RUNR RUNTIME
 #       what a checkout of RunR (its last release) pins of RUNTIME's versions: "discovered" (exit 0:
-#       RunR finds them in the registry, nothing to move), or the pins (exit 2: a person moves them)
+#       RunR finds them in the registry, nothing to move), or the pins (exit 2: a person moves them);
+#       exit 3: that release has no RUNTIME yet
 #   ci/lang-bot.sh land DIR RUN_URL
 #       after the test jobs (DIR/tests.json, their results in DIR/results/<artifact>/, RunR's pins
 #       in DIR/pins/<runtime>): every green test is committed on top of main (the version into
 #       tested-versions, or the ML or toolchain pin) when main did not change its images since the
-#       tested commit, and pushed as `git push origin HEAD:refs/heads/main`, a fast-forward (the
+#       tested commit (a new version of a runtime that supports only its newest release also
+#       deprecates the published ones below it: lifecycle), and pushed as
+#       `git push origin HEAD:refs/heads/main`, a fast-forward (the
 #       bot's identity LANG_BOT_NAME, LANG_BOT_EMAIL). DIR/actions: what the issues get, one action
 #       per line (comment ISSUE FILE, label ISSUE LABEL, close ISSUE, publish IMAGES)
 #
-# Needs bash, jq, curl (ml-bump, wasm-bump), sha256sum and GNU sed and sort.
+# Needs bash, jq, curl (ml-bump, wasm-bump, tool-bump), sha256sum, sha512sum and GNU sed, sort and
+# date.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASSED_LABEL="${LANG_PASSED_LABEL:-lang: passed}"
 ATTENTION_LABEL="${LANG_ATTENTION_LABEL:-needs attention}"
-LANGUAGES=" python nodejs go php "
+# the language runtimes: RUNTIME_DEFS of lib/common.sh, as ci.sh builds them
+SCRIPT_DIR="$ROOT"
+# shellcheck source=../lib/common.sh
+source "${ROOT}/lib/common.sh"
+LANGUAGES=" $(runtime_ids) "
 ML=" pytorch tensorflow "
+
+# A tool a language image pins: TOOL|image (a language runtime)|ARG|checksum ARG (- none)|download,
+# {V} the version (- none)|RunR suites. A download's SHA-512 is checked against <download>.sha512.
+# The suite deploys the image's newest version: RunR's main e2e.
+LANG_TOOL_DEFS=(
+  "maven|java|MAVEN_VERSION|MAVEN_SHA512|https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/{V}/apache-maven-{V}-bin.tar.gz|test"
+  "maven-dependency-plugin|java|MAVEN_DEPENDENCY_PLUGIN|-|-|test"
+)
 
 # A toolchain of the WebAssembly images: TOOL|ARG|SHA256 ARG prefix (- none)|download amd64|arm64|
 # reqs image (- none)|RunR suites. {V} is the version. The suites deploy the images it changes:
@@ -72,6 +101,9 @@ newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail 
 json_list() { if [ "$#" -gt 0 ]; then printf '%s\n' "$@" | jq -s -c .; else echo '[]'; fi; }
 json_strings() { if [ "$#" -gt 0 ]; then printf '%s\n' "$@" | jq -R . | jq -s -c .; else echo '[]'; fi; }
 toolchain() { local d; for d in "${TOOLCHAIN_DEFS[@]}"; do [ "${d%%|*}" = "$1" ] && { echo "$d"; return 0; }; done; return 1; }
+lang_tool() { local d; for d in "${LANG_TOOL_DEFS[@]}"; do [ "${d%%|*}" = "$1" ] && { echo "$d"; return 0; }; done; return 1; }
+# filter_of RUNTIME — the version filter of a language runtime (RUNTIME_DEFS)
+filter_of() { local def; def="$(runtime_def "$1")" || return 0; IFS='|' read -r _ _ _ _ _ def _ <<< "$def"; echo "$def"; }
 
 cmd_plan() {
   local issues="${1:?usage: lang-bot.sh plan ISSUES.json [--only=N,…]}" only="" arg
@@ -112,6 +144,13 @@ cmd_plan() {
       version="${full%.*}"
       key="$runtime"
       suites="test-ml"
+    elif def="$(lang_tool "$runtime")"; then
+      [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "a tool release is X.Y.Z"}')"); continue; }
+      kind=tool
+      IFS='|' read -r _ key _ <<< "$def"
+      key="${key}-${runtime}"
+      suites="${def##*|}"
+      suites="${suites:--}"
     elif def="$(toolchain "$runtime")"; then
       kind=wasm
       key="wasm-${runtime}"
@@ -241,6 +280,59 @@ cmd_wasm_bump() {
     '{pin: $pin, images: $images, mirror: $mirror}'
 }
 
+cmd_tool_bump() {
+  local tool="${1:?usage: lang-bot.sh tool-bump TOOL VERSION}" version="${2:?}" def image arg sha url file old sum="" published
+  def="$(lang_tool "$tool")" || { echo "${tool}: no tool of a language image" >&2; return 1; }
+  IFS='|' read -r _ image arg sha url _ <<< "$def"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "${version}: not a release X.Y.Z" >&2; return 1; }
+  file="${ROOT}/runtimes/${image}/Dockerfile"
+  old="$(sed -n "s/^ARG ${arg}=//p" "$file" 2>/dev/null | head -n 1)"
+  [ -n "$old" ] || { echo "no ARG ${arg} in runtimes/${image}/Dockerfile" >&2; return 1; }
+  watch_lib
+  if [ "$sha" != "-" ]; then
+    url="${url//\{V\}/$version}"
+    sum="$(watch_digest sha512 "$url")" || sum=""
+    [[ "$sum" =~ ^[0-9a-f]{128}$ ]] || { echo "no SHA-512 of ${url}" >&2; return 2; }
+    published="$(watch_get "${url}.sha512" | awk '{ print $1; exit }')" || published=""
+    [ "$sum" = "$published" ] || { echo "${url}: its SHA-512 is not the one published next to it (${published:-none})" >&2; return 2; }
+  fi
+  sed -i -E "s/^ARG ${arg}=.*/ARG ${arg}=${version}/" "$file"
+  if [ "$sha" != "-" ]; then
+    sed -i -E "s/^ARG ${sha}=.*/ARG ${sha}=${sum}/" "$file"
+  fi
+  jq -nc --arg pin "${tool} ${version} (was ${old})" --arg image "$image" '{pin: $pin, image: $image, images: [$image]}'
+}
+
+cmd_lifecycle() {
+  local runtime="${1:?usage: lang-bot.sh lifecycle RUNTIME VERSION}" version="${2:?}" file today sunset out rc=0
+  [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "${version}: not a version X.Y" >&2; return 1; }
+  file="${ROOT}/runtimes/${runtime}/runtime.yaml"
+  grep -q '^versionDiscovery:' "$file" 2>/dev/null || { echo "runtimes/${runtime}/runtime.yaml has no versionDiscovery" >&2; return 1; }
+  today="${LANG_TODAY:-$(date -u +%Y-%m-%d)}"
+  sunset="$(date -u -d "${today} + ${LANG_SUNSET_DAYS:-91} days" +%Y-%m-%d)"
+  out="$(mktemp)"
+  # the entry at the end of versionDiscovery.lifecycle (the block made when it has none)
+  awk -v v="$version" -v entry="    \"${version}\": {deprecated: \"${today}\", sunset: \"${sunset}\"}" '
+    function add() { if (!done) { if (!lc) print "  lifecycle:"; print entry; done = 1 } }
+    state == "lc" && !/^    / { add(); state = /^[^ #]/ ? "" : "vd" }
+    state == "vd" && /^[^ #]/ { add(); state = "" }
+    /^versionDiscovery:/ { state = "vd"; print; next }
+    state == "vd" && /^  lifecycle:/ { lc = 1; state = "lc"; print; next }
+    state == "lc" && index($0, "    \"" v "\":") == 1 { done = 1; kept = 1 }
+    { print }
+    END { if (state != "") add(); if (kept) exit 3 }
+  ' "$file" > "$out" || rc=$?
+  if [ "$rc" = 3 ]; then
+    rm -f -- "$out"
+    echo "${version}: kept, runtimes/${runtime}/runtime.yaml has its lifecycle"
+    return 3
+  fi
+  [ "$rc" = 0 ] || { rm -f -- "$out"; return 1; }
+  cat "$out" > "$file"
+  rm -f -- "$out"
+  echo "${version}: deprecated ${today}, sunset ${sunset}"
+}
+
 cmd_tested() {
   local runtime="${1:?usage: lang-bot.sh tested RUNTIME VERSION FULL}" version="${2:?}" full="${3:?}" file out
   [[ "$LANGUAGES" == *" ${runtime} "* ]] || { echo "${runtime}: not a language runtime" >&2; return 1; }
@@ -264,7 +356,7 @@ cmd_catalog() {
   local catalog="${runr}/api/resources/runtimes/builtin.json" env="${runr}/api/.env.docker" out
   [ -f "$catalog" ] || { echo "no ${catalog}" >&2; return 1; }
   jq -e --arg r "$runtime" '.runtimes | (if type == "array" then .[] else .[] end) | select(.id == $r)' "$catalog" >/dev/null \
-    || { echo "${catalog} has no runtime ${runtime}" >&2; return 1; }
+    || { echo "${catalog} has no runtime ${runtime}" >&2; return 3; }
   out="$(mktemp)"
   jq --arg r "$runtime" --arg v "$version" --arg i "$image" '
     .runtimes |= (if type == "array"
@@ -304,6 +396,7 @@ cmd_runr_pins() {
   catalog="${runr}/api/resources/runtimes/builtin.json"
   [ -f "$catalog" ] || { echo "no ${catalog}" >&2; return 1; }
   entry="$(jq -c --arg r "$runtime" '.runtimes | (if type == "array" then .[] else .[] end) | select(.id == $r)' "$catalog")"
+  [ -n "$entry" ] || { echo "no ${runtime} runtime"; return 3; }
   pins="$(grep -nE "exec-${runtime}:[0-9]" "${runr}/runtime/lib/runtime-images.sh" "${runr}/api/config/executor.php" 2>/dev/null || true)"
   if [ -n "$entry" ] && jq -e '.versionDiscovery and (.versions // [] | length == 0)' <<< "$entry" >/dev/null && [ -z "$pins" ]; then
     echo "discovered"
@@ -325,7 +418,7 @@ tail_of() {
 
 cmd_land() {
   local dir="${1:?usage: lang-bot.sh land DIR RUN_URL}" run_url="${2:?}" n i test issue kind runtime version full key build
-  local tested comment name subject sha pins rc suite suites failed paths images publish lines note body
+  local tested comment name subject sha pins rc suite suites failed paths images publish lines note body older deprecated
   mkdir -p "$dir/comments"
   : > "$dir/actions"
   n="$(jq length "$dir/tests.json")"
@@ -340,9 +433,10 @@ cmd_land() {
     failed=""
     [ "$build" = success ] || failed="build"
     lines="- build, smoke test and this repository's tests: ${build}"
-    # the images the test built: the runtime's, or a toolchain's (wasm-bump lists them)
+    # the images the test built: the runtime's, or a tool's or toolchain's (tool-bump and wasm-bump
+    # list them)
     images="$runtime"
-    if [ "$kind" = wasm ]; then
+    if [ "$kind" = wasm ] || [ "$kind" = tool ]; then
       images="$(cat "$dir/results/lang-result-${key}-build/images" 2>/dev/null || true)"
       if [ -z "$images" ] && [ "$build" = success ]; then
         failed="build"
@@ -389,15 +483,28 @@ cmd_land() {
       continue
     fi
     git checkout -q --detach origin/main
+    deprecated=""
     case "$kind" in
       language)
         bash "$ROOT/ci/lang-bot.sh" tested "$runtime" "$version" "$full"
         # a version that had no tag yet is a new one
         if ! grep -qxF "$version" "$dir/results/lang-result-${key}-build/published" 2>/dev/null; then
           subject="feat(${runtime}): ${runtime} ${version} (${full})"
+          # a runtime that supports only its newest release (Bun): the published versions below it
+          # are deprecated, with a sunset date
+          if [ "$(filter_of "$runtime")" = newest-minor ]; then
+            for older in $(grep -xE '[0-9]+\.[0-9]+' "$dir/results/lang-result-${key}-build/published" 2>/dev/null | sort -V); do
+              if [ "$older" != "$version" ] && version_gte "$version" "$older" && note="$(bash "$ROOT/ci/lang-bot.sh" lifecycle "$runtime" "$older")"; then
+                deprecated="${deprecated:+${deprecated}; }${note}"
+              fi
+            done
+          fi
         else
           subject="fix(${runtime}): ${runtime} ${full}"
         fi ;;
+      tool)
+        git apply "$dir/results/lang-result-${key}-build/pin.patch"
+        subject="fix(${images%% *}): $(cat "$dir/results/lang-result-${key}-build/pin" 2>/dev/null || echo "${runtime} ${full}")" ;;
       ml)
         git apply "$dir/results/lang-result-${key}-build/pin.patch"
         subject="fix(${runtime}): $(cat "$dir/results/lang-result-${key}-build/pin" 2>/dev/null || echo "${runtime} ${full}")" ;;
@@ -412,7 +519,9 @@ cmd_land() {
     fi
     body="The language bot built ${images// /, } on ${runtime} ${full}, smoke-tested them and ran this repository's tests before this commit"
     [ -z "$suites" ] || body="${body}, and RunR's e2e (${suites// /, }) on the candidate images"
-    body="$(fold -s -w 98 <<< "${body}: ${run_url}." | sed 's/ *$//')"
+    body="${body}: ${run_url}."
+    [ -z "$deprecated" ] || body="${body} ${runtime} supports only its newest release: versionDiscovery.lifecycle deprecates ${deprecated}."
+    body="$(fold -s -w 98 <<< "${body}" | sed 's/ *$//')"
     GIT_AUTHOR_NAME="${LANG_BOT_NAME:?}" GIT_AUTHOR_EMAIL="${LANG_BOT_EMAIL:?}" GIT_COMMITTER_NAME="$LANG_BOT_NAME" GIT_COMMITTER_EMAIL="$LANG_BOT_EMAIL" \
       git commit -q -a -F - <<EOF
 ${subject}
@@ -437,6 +546,7 @@ EOF
       echo ""
       echo "$lines"
       echo "- RunR: ${pins}"
+      [ -z "$deprecated" ] || echo "- ${runtime} supports only its newest release: \`runtimes/${runtime}/runtime.yaml\` deprecates ${deprecated} (RunR reads it from the runtime catalog)"
       echo ""
       echo "Run: ${run_url}."
     } > "$comment"
@@ -450,10 +560,12 @@ case "$command" in
   plan) cmd_plan "$@" ;;
   ml-bump) cmd_ml_bump "$@" ;;
   wasm-bump) cmd_wasm_bump "$@" ;;
+  tool-bump) cmd_tool_bump "$@" ;;
   tested) cmd_tested "$@" ;;
+  lifecycle) cmd_lifecycle "$@" ;;
   catalog) cmd_catalog "$@" ;;
   check-e2e) cmd_check_e2e "$@" ;;
   runr-pins) cmd_runr_pins "$@" ;;
   land) cmd_land "$@" ;;
-  *) sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,64p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

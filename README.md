@@ -224,7 +224,21 @@ release and closes the older ones as superseded.
   The image is pushed as `ghcr.io/brf-tech/runr/candidates/exec-<runtime>:<X.Y.Z>`, a package
   RunR never discovers by itself. RunR's main e2e (`runtime/ci.sh test` of its last release, on
   Kind) then runs with that image as the only version of that runtime, and its xaas and faas cases
-  deploy functions on it (`ci/lang-bot.sh catalog`, `check-e2e`).
+  deploy functions on it (`ci/lang-bot.sh catalog`, `check-e2e`). A runtime RunR's last release
+  does not have yet (Java, .NET, Ruby and Bun before RunR 0.6.8) cannot be deployed there: the bot
+  reports the suite as skipped, and the build and smoke test decide, until RunR's next release
+  brings the runtime.
+- **A new Bun minor.** Bun supports only its newest release. When a new minor passes, the bot also
+  deprecates every published version below it, from that day, with a sunset 13 weeks later
+  (`versionDiscovery.lifecycle` of `runtimes/bun/runtime.yaml`, `ci/lang-bot.sh lifecycle`):
+  RunR, reading the [runtime catalog](#the-runtime-catalog), then shows the badge and sends its
+  reminders (13, 4 and 1 weeks before the sunset).
+- **A tool of a language image** (`ci/lang-bot.sh tool-bump`): Maven and its dependency plugin in
+  `exec-java`. The `ARG` moves in `runtimes/java/Dockerfile`, Maven's with the SHA-512 of its
+  download from Maven Central, which must be the one published next to it (`.sha512`). Every
+  version of the image is built and smoke-tested (`ci.sh build java`), this repository's tests run,
+  and the newest version is pushed as `candidates/exec-java:<X.Y.Z>-<tool>-<release>`; RunR's main
+  e2e then runs on it as for a language version.
 - **An ML framework.** The pin moves (torch with the torchvision release that requires it, or
   tensorflow's CPU and CUDA pins), the CPU image is built and smoke-tested, this repository's
   tests run, and the image is pushed as `candidates/exec-<runtime>:<X.Y.Z>`. RunR's main e2e then
@@ -248,15 +262,17 @@ release and closes the older ones as superseded.
   test decides. The images keep their version, so RunR moves nothing.
 - **Green:** the bot commits on `main` as a fast-forward (`git push origin HEAD:refs/heads/main`,
   never forced), as `RunR deps bot <deps-bot@runr.sh>`. A language version goes into
-  `runtimes/<runtime>/tested-versions`; an ML framework's or a toolchain's commit is its pin. The
+  `runtimes/<runtime>/tested-versions` (a new Bun minor with the lifecycle of the ones below it);
+  a tool's, an ML framework's or a toolchain's commit is its pin. The
   bot starts the publish workflow for those images (a push of the workflow's token starts no
   workflow), and closes the issue with the label `lang: passed`. The comment also says what RunR's
   last release pins of that runtime. The language runtimes pin nothing there (RunR finds their
   versions in the registry), so nothing moves in RunR. When `main` changed the images' directories
   after the tested commit, nothing is committed, and the next run tests it again.
 - **Red:** the label `needs attention` and a comment with what failed. Nothing is committed: the
-  weekly publish holds a language version, and an ML or toolchain pin stays where it was. Run the workflow with the issue's number to test it again
-  (it takes the label off), or wait for a newer release to supersede the issue.
+  weekly publish holds a language version, and a tool, ML or toolchain pin stays where it was.
+  Run the workflow with the issue's number to test it again (it takes the label off), or wait for
+  a newer release to supersede the issue.
 
 **The gate.** The publish workflow sets `LANG_GATE=1`. A routine build of an upstream version
 other than the one a tag already runs is pushed only when `runtimes/<runtime>/tested-versions`
