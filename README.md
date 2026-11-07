@@ -208,8 +208,9 @@ published.
 
 | Title | When |
 |-------|------|
-| `lang: <runtime> <X.Y.Z> released` | python, nodejs, go, php: a new patch release of a published version, or a new version not published yet (Node.js: the newest minor of an even major), from Docker Hub's tags of the base image |
-| `lang: <runtime> <X.Y> end of life <date>` | a published version past its end of life or within 60 days of it (endoflife.date). For people: the weekly build stops building it by itself once the date is past |
+| `lang: <runtime> <X.Y.Z> released` | a language runtime of `RUNTIME_DEFS` (python, nodejs, go, php, java, dotnet, ruby, bun): a new patch release of a published version, or a new version not published yet, as `ci.sh build` discovers it (Node.js: the newest minor of an even major; Java: an Eclipse Temurin LTS major; .NET: a released version, not a preview or release candidate; Bun: the newest minor), from the tags of the base image (Docker Hub, MCR for .NET; a .NET release is the runtime's, read from `dotnet/runtime-deps`, not the SDK's). Not a release `runtimes/<runtime>/tested-versions` lists already: the next publish publishes that one |
+| `lang: <runtime> <X.Y> end of life <date>` | a published version past its end of life or within 60 days of it (endoflife.date), also when the base image's registry does not answer. For people: the weekly build stops building it by itself once the date is past |
+| `lang: maven\|maven-dependency-plugin <X.Y.Z> released` | a release on Maven Central newer than its `ARG` in `runtimes/java/Dockerfile`, in the pin's major line (Maven 4 is a person's change) |
 | `lang: pytorch\|tensorflow <X.Y.Z> released` | a framework release on PyPI newer than its pin |
 | `lang: <tool> <version> released` | a toolchain of the WebAssembly images newer than its `ARG` (spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk, rust) |
 
