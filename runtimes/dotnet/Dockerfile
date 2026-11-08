@@ -5,11 +5,15 @@ ARG VERSION=10.0
 FROM ghcr.io/brf-tech/runr/reqs/dotnet-sdk:${VERSION}
 ARG VERSION
 
+# DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: a RunR sandbox runs the SDK as a user of its own with an empty
+# HOME and, by default, no network; without it the first dotnet command there prints "An issue was
+# encountered verifying workloads" on stderr (the code interpreter's C#, RunR 0.6.8 on OP).
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_NOLOGO=1 \
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
     DOTNET_GENERATE_ASPNET_CERTIFICATE=false \
     DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 \
+    DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK=1 \
     MSBUILDDISABLENODEREUSE=1 \
     NUGET_XMLDOC_MODE=skip \
     RUNR_DOTNET_VERSION=${VERSION} \
