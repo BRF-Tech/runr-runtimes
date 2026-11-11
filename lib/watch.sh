@@ -29,9 +29,15 @@
 #                                             ARG in runtimes/wasm-*/Dockerfile: spin, tinygo,
 #                                             wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk,
 #                                             rust
+#   base: <name> <series> available           a newer series of a base image the reqs mirror pins
+#                                             (WATCH_BASE_DEFS: alpine 3.N, debian N, node's even
+#                                             majors, python 3.N, golang 1.N; REQS_IMAGES of
+#                                             lib/mirror.sh): a person's decision, as an end of
+#                                             life is. Nothing is mirrored or moved by itself, and
+#                                             the language bot does not test it
 #
 # The upstreams: the tags of the base images (RUNTIME_DEFS: Docker Hub, or the image's registry:
-# mcr.microsoft.com), the published tags of ${REGISTRY}/exec-<runtime> (the patch tags <full>-r<n>
+# mcr.microsoft.com; WATCH_BASE_DEFS: Docker Hub), the published tags of ${REGISTRY}/exec-<runtime> (the patch tags <full>-r<n>
 # name the upstream version a tag runs), endoflife.date, Maven Central, PyPI, GitHub releases
 # (GH_TOKEN raises GitHub's rate limit) and ziglang.org.
 # WATCH_FIXTURES=DIR answers every request from DIR (the tests): the file named after the URL with
@@ -504,6 +510,92 @@ Reported by ci.sh watch."
   done
 }
 
+# A base-image series the images or the reqs mirror pin, which upstream may move past:
+# NAME|Docker Hub repository|ERE of a series in its tags|tag suffix|ERE of the series in a source of
+# REQS_IMAGES (lib/mirror.sh), group 1. A series counts upstream once a release of it is tagged
+# (<series>.<n><suffix>: alpine 3.23.0, debian 13.1, node 24.11.0-slim), not a pre-release; Node.js
+# its even majors (its LTS lines). Debian's series are its numbers; a source names its codename
+# (WATCH_DEBIAN_CODENAMES).
+WATCH_BASE_DEFS=(
+  "alpine|library/alpine|3\.[0-9]+||alpine:?(3\.[0-9]+)"
+  "debian|library/debian|[0-9]+||[-:](buster|bullseye|bookworm|trixie|forky|duke)([-@]|$)"
+  "node|library/node|[0-9]*[02468]|-slim|node:([0-9]+)([-:@]|$)"
+  "python|library/python|3\.[0-9]+|-slim|python:(3\.[0-9]+)([-:@]|$)"
+  "golang|library/golang|1\.[0-9]+|-alpine|golang:(1\.[0-9]+)([-:@]|$)"
+)
+WATCH_DEBIAN_CODENAMES="10:buster 11:bullseye 12:bookworm 13:trixie 14:forky 15:duke"
+
+# watch_reqs_sources — the sources of REQS_IMAGES (the images the reqs mirror copies), one per line,
+# from WATCH_REQS_FILE (default lib/mirror.sh)
+watch_reqs_sources() {
+  sed -n '/^REQS_IMAGES=(/,/^)/p' "${WATCH_REQS_FILE:-${SCRIPT_DIR}/lib/mirror.sh}" \
+    | sed -n 's/^[[:space:]]*"[^"|]*|\([^"]*\)".*/\1/p'
+}
+
+# watch_debian CODENAME|NUMBER — Debian's number of a codename (bookworm: 12), or the codename of a
+# number
+watch_debian() {
+  local pair
+  for pair in $WATCH_DEBIAN_CODENAMES; do
+    if [ "${pair#*:}" = "$1" ]; then echo "${pair%%:*}"; return 0; fi
+    if [ "${pair%%:*}" = "$1" ]; then echo "${pair#*:}"; return 0; fi
+  done
+  return 1
+}
+
+# watch_bases — the base-image series the reqs mirror pins against the newest upstream ones: a newer
+# series is a person's decision (the images and RunR's references follow by hand), filed as
+# "base: <name> <series> available"; nothing is mirrored or changed
+watch_bases() {
+  local def name repo series suffix ref sources src ours have tags upstream codename refs
+  sources="$(watch_reqs_sources)"
+  for def in "${WATCH_BASE_DEFS[@]}"; do
+    IFS='|' read -r name repo series suffix ref <<< "$def"
+    # the series the sources pin, the newest of them
+    have=""
+    refs=""
+    while IFS= read -r src; do
+      [ -n "$src" ] || continue
+      ours="$(sed -nE "s/.*${ref}.*/\1/p" <<< "${src%%@*}" | head -n 1)"
+      [ -n "$ours" ] || continue
+      if [ "$name" = debian ]; then ours="$(watch_debian "$ours")" || continue; fi
+      refs="${refs}"$'\n'"- \`${src%%@*}\`"
+      have="$(printf '%s\n%s\n' "$have" "$ours" | grep -v '^$' | sort -V | tail -n 1)"
+    done <<< "$sources"
+    if [ -z "$have" ]; then
+      echo -e "  ${GREEN}✓ ${name}: the reqs mirror pins no series of it${NC}"
+      continue
+    fi
+    if ! tags="$(watch_hub_tags "$repo")"; then
+      echo -e "  ${RED}✗ ${name}: the tags of ${repo} cannot be read${NC}"
+      WATCH_FAILED=$((WATCH_FAILED + 1))
+      continue
+    fi
+    # a series with a release: <series><suffix> and <series>.<n><suffix>
+    upstream="$(grep -E "^${series}${suffix}$" <<< "$tags" | sed "s/${suffix}$//" | sort -V -u | while read -r s; do
+      if grep -qE "^${s//./\\.}\.[0-9]+${suffix}$" <<< "$tags"; then echo "$s"; fi
+    done | sort -V | tail -n 1)"
+    if [ -z "$upstream" ]; then
+      echo -e "  ${RED}✗ ${name}: no released series in the tags of ${repo}${NC}"
+      WATCH_FAILED=$((WATCH_FAILED + 1))
+      continue
+    fi
+    if [ "$(printf '%s\n%s\n' "$have" "$upstream" | sort -V | tail -n 1)" = "$have" ]; then
+      echo -e "  ${GREEN}✓ ${name}: the reqs mirror pins up to ${have}, the newest upstream is ${upstream}${NC}"
+      continue
+    fi
+    codename=""
+    if [ "$name" = debian ] && codename="$(watch_debian "$upstream")"; then codename=" (${codename})"; else codename=""; fi
+    watch_report "base-${name}-${upstream}" "base: ${name} ${upstream}${codename} available" \
+"Upstream has a newer series of ${name}: **${upstream}**${codename} (\`${repo#library/}:${upstream}${suffix}\`). The reqs mirror (\`REQS_IMAGES\` of \`lib/mirror.sh\`) pins ${name} up to ${have}:
+${refs}
+
+A person decides whether and when the images and RunR follow it: add the new image to \`REQS_IMAGES\` (and run the reqs mirror workflow), move the Dockerfiles and BRF-Tech/runr's references to it, and keep the old one while anything uses it. The language bot does not test or move it, and nothing is mirrored by itself. Close this issue once decided.
+
+Reported by ci.sh watch."
+  done
+}
+
 cmd_watch() {
   local arg
   WATCH_FOUND=0
@@ -523,6 +615,8 @@ cmd_watch() {
   watch_ml
   echo -e "${BOLD}── WebAssembly toolchains ──${NC}"
   watch_wasm
+  echo -e "${BOLD}── Base-image series of the reqs mirror ──${NC}"
+  watch_bases
   echo ""
   echo "${WATCH_FOUND} finding(s)."
   if [ "$WATCH_FAILED" -gt 0 ]; then

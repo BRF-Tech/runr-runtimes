@@ -6,7 +6,9 @@
 # releases those of the runtime-deps image; Bun: the newest minor, which deprecates the older; not
 # an odd major, a pre-release, a version below the minimum or one past its end of life), a
 # published version past or near its end of life, a release of a tool a language image pins
-# (Maven), a framework release newer than its pin and a WebAssembly toolchain newer than its ARG
+# (Maven), a framework release newer than its pin, a WebAssembly toolchain newer than its ARG and
+# a newer released series of a base image the reqs mirror pins (alpine, debian by its codename,
+# node's even majors, python, golang; not a pre-release or an odd node major)
 # are findings with the titles the workflows file issues by, that an image that follows its
 # upstream or a release the language bot tested already is none, and that an upstream that does
 # not answer fails the watch with the rest still checked (an end of life also without Docker Hub).
@@ -50,7 +52,7 @@ eol python 3.10 '"2026-10-31"'
 eol python 3.13 '"2029-10-31"'
 eol python 3.16 '"2032-10-31"'
 eol python 3.17 true
-hub library/node 20.20-slim 20.20.2-slim 24.22-slim 24.22.1-slim 24.23-slim 24.23.0-slim 25.1-slim 25.1.0-slim
+hub library/node 20-slim 20.20-slim 20.20.2-slim 24-slim 24.22-slim 24.22.1-slim 24.23-slim 24.23.0-slim 25-slim 25.1-slim 25.1.0-slim 26-slim
 published nodejs 20.20 20.20.2-r1 24.22 24.22.1-r1
 # Node.js: endoflife.date's cycles are majors
 eol nodejs 24 '"2028-04-30"'
@@ -111,6 +113,25 @@ fx https://ziglang.org/download/index.json '{"master": {}, "0.15.1": {}, "0.16.0
 fx https://pypi.org/pypi/componentize-py/json '{"info": {"version": "0.25.1"}}'
 fx https://pypi.org/pypi/spin-sdk/json '{"info": {"version": "5.0.0"}}'
 hub library/rust 1.98.1-slim-bookworm 1.99.0-slim-bookworm 1.99.0-alpine 2.0.0-beta-slim-bookworm
+# the base-image series of the reqs mirror (WATCH_REQS_FILE): alpine 3.21, Debian bookworm (12),
+# node 22, python 3.13, golang 1.25; upstream alpine 3.23 (3.24 without a release yet), Debian 13
+# (14 without a point release), node 24 (25 odd, 26 without a release), python 3.16 (3.17 a
+# release candidate), golang 1.25
+cat > "$tmp/mirror.sh" <<'EOF'
+REQS_IMAGES=(
+  # ── a comment ──
+  "alpine:3.21|alpine:3.21"
+  "redis:7-alpine|redis:7-alpine"
+  "alpine-helm:3.15|alpine/helm:3.15"
+  "node:22-bookworm-slim|node:22-bookworm-slim"
+  "python:3.13-slim-bookworm|python:3.13-slim-bookworm"
+  "golang:1.25-alpine|golang:1.25-alpine"
+  "rust:1.95.0-slim-bookworm|rust:1.95.0-slim-bookworm@sha256:d7482085ff5b415f84dba5647ae71606650bdef00db7aeb69f4b3d170c3e4082"
+)
+EOF
+export WATCH_REQS_FILE="$tmp/mirror.sh"
+hub library/alpine 3.21 3.21.4 3.22 3.22.2 3.23 3.23.0 3.24 edge latest
+hub library/debian 12 12.12 bookworm 13 13.1 trixie 14 forky testing latest
 
 reports="$tmp/reports"
 rc=0
@@ -131,6 +152,11 @@ lang: pytorch 2.15.0 released
 lang: ruby 4.0.9 released
 lang: rust 1.99.0 released
 lang: tinygo 0.43.0 released"
+expected="base: alpine 3.23 available
+base: debian 13 (trixie) available
+base: node 24 available
+base: python 3.16 available
+${expected}"
 [ "$titles" = "$expected" ] || fail "findings: $(printf '%s\n' "$titles") $(cat "$tmp/out")"
 grep -qF 'runs 3.13.9' "$reports/python-3.13.10.md" || fail "the patch finding names what the tag runs: $(cat "$reports/python-3.13.10.md")"
 grep -qF 'not published yet' "$reports/python-3.16.0.md" || fail "the new version: $(cat "$reports/python-3.16.0.md")"
@@ -142,7 +168,15 @@ grep -qF 'and the mirrored base image' "$reports/tinygo-0.43.0.md" || fail "tiny
 grep -qF "RunR's ML e2e case" "$reports/pytorch-2.15.0.md" || fail "the ML test: $(cat "$reports/pytorch-2.15.0.md")"
 grep -qF '✓ 1.25: publishes 1.25.4' "$tmp/out" || fail "go follows its upstream: $(cat "$tmp/out")"
 grep -qF 'nodejs 25' "$tmp/out" && fail "an odd Node.js major"
-echo "ok - findings: a patch release, a new version, end of life past and near, a framework release, WebAssembly toolchains; no odd Node.js major, pre-release, version below the minimum or end-of-life version"
+# the base-image series: what the mirror pins, the newest released upstream series, a person decides
+grep -qF -- '- `alpine:3.21`' "$reports/base-alpine-3.23.md" && ! grep -qF 'alpine/helm' "$reports/base-alpine-3.23.md" \
+  && grep -qF 'pins alpine up to 3.21' "$reports/base-alpine-3.23.md" && grep -qF 'nothing is mirrored by itself' "$reports/base-alpine-3.23.md" \
+  || fail "the alpine series: $(cat "$reports/base-alpine-3.23.md")"
+grep -qF -- '- `rust:1.95.0-slim-bookworm`' "$reports/base-debian-13.md" && grep -qF 'pins debian up to 12' "$reports/base-debian-13.md" \
+  && grep -qF '(`debian:13`)' "$reports/base-debian-13.md" || fail "the debian series: $(cat "$reports/base-debian-13.md")"
+grep -qF '(`node:24-slim`)' "$reports/base-node-24.md" || fail "the node series: $(cat "$reports/base-node-24.md")"
+grep -qF '✓ golang: the reqs mirror pins up to 1.25, the newest upstream is 1.25' "$tmp/out" || fail "golang follows its upstream: $(cat "$tmp/out")"
+echo "ok - findings: a patch release, a new version, end of life past and near, a framework release, WebAssembly toolchains, newer base-image series of the reqs mirror; no odd Node.js major, pre-release, version below the minimum or end-of-life version"
 
 # Java, .NET, Ruby and Bun as the build discovers them; a version the bot tested is the publish's
 grep -qF 'runs 21.0.12' "$reports/java-21.0.13.md" && grep -qF '`library/eclipse-temurin:21.0.13_9-jdk`' "$reports/java-21.0.13.md" \

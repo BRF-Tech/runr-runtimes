@@ -1,6 +1,7 @@
 # The upstream releases the images follow (README.md, The language bot), every week and by hand:
 # `ci.sh watch` reports new versions and patch releases of the language runtimes, versions near or
-# past their end of life, new releases of the ML frameworks and of the WebAssembly toolchains.
+# past their end of life, new releases of the ML frameworks and of the WebAssembly toolchains, and
+# newer series of the base images the reqs mirror pins ("base: …", a person's decision).
 # Each finding becomes an issue of this repository once: a title an issue already has, open or
 # closed, is not filed again. Language tests (lang-test.yml) runs when this workflow ends.
 name: Language releases

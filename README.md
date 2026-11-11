@@ -182,7 +182,7 @@ key of the repository's Actions secrets (PACKAGES.md).
 | `platform-release.yml` (Platform release in the patch feed) | by hand | A RunR platform release that carries a level, added to the patch feed |
 | `heavy.yml` (Heavy images, GPU) | by hand, on any branch; weekly (Monday 04:17 UTC: `exec-pytorch` and `exec-tensorflow` `-gpu`) | `exec-pytorch`/`exec-tensorflow` `-gpu` and `hf-serve` `-cuda`, one image per job on a runner with its preinstalled toolchains removed. Without a GPU on the runner, the smoke test checks the CUDA build. `push: false` builds and smoke-tests only. |
 | `mirror.yml` (Mirror reqs images) | by hand; weekly (Monday 02:17 UTC) | `ci.sh mirror-reqs` and `ci.sh mirror-bases` |
-| `lang-releases.yml` (Language releases) | weekly (Monday 00:47 UTC); by hand | `ci.sh watch`: an issue per upstream release the images do not follow yet ([The language bot](#the-language-bot)) |
+| `lang-releases.yml` (Language releases) | weekly (Monday 00:47 UTC); by hand | `ci.sh watch`: an issue per upstream release the images do not follow yet, and per newer base-image series the reqs mirror could follow ([The language bot](#the-language-bot)) |
 | `lang-test.yml` (Language tests) | after Language releases; by hand | Each new version built, smoke-tested and tested with RunR's e2e; green ones committed on `main` and published, red ones held ([The language bot](#the-language-bot)) |
 
 Which images a change touches (`ci/images.sh`, tested by `test/images_test.sh`):
@@ -218,6 +218,7 @@ published.
 | `lang: maven\|maven-dependency-plugin <X.Y.Z> released` | a release on Maven Central newer than its `ARG` in `runtimes/java/Dockerfile`, in the pin's major line (Maven 4 is a person's change) |
 | `lang: pytorch\|tensorflow <X.Y.Z> released` | a framework release on PyPI newer than its pin |
 | `lang: <tool> <version> released` | a toolchain of the WebAssembly images newer than its `ARG` (spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk, rust) |
+| `base: <name> <series> available` | a newer released series of a base image the reqs mirror pins (`REQS_IMAGES` of `lib/mirror.sh`): alpine 3.N, debian N (by its codename: bookworm is 12), node's even majors, python 3.N, golang 1.N (`WATCH_BASE_DEFS` of `lib/watch.sh`); a series counts once a release of it is tagged (`alpine:3.24.0`, `debian:13.1`), not a pre-release. For people, as an end of life is: whether and when the images and RunR follow it is a person's decision; the bot mirrors and moves nothing, and does not test it |
 
 **Language tests** (`lang-test.yml`, after every run of Language releases and by hand: **Actions →
 Language tests → Run workflow**, or `gh workflow run lang-test.yml -f issue=31`) tests every open
