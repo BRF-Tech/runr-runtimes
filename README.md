@@ -273,27 +273,41 @@ release and closes the older ones as superseded.
   wasm-go and wasm-python: for componentize-py and spin-sdk, and for wasm-go's TinyGo, the smoke
   test decides. The images keep their version, so RunR moves nothing.
 - **Green:** the bot commits on `main` as a fast-forward (`git push origin HEAD:refs/heads/main`,
-  never forced), as `RunR deps bot <deps-bot@runr.sh>`. A language version goes into
-  `runtimes/<runtime>/tested-versions` (a new Bun minor with the lifecycle of the ones below it);
-  a tool's, an ML framework's or a toolchain's commit is its pin. The
-  bot starts the publish workflow for those images (a push of the workflow's token starts no
-  workflow), and closes the issue with the label `lang: passed`. The comment also says what RunR's
-  last release pins of that runtime. The language runtimes pin nothing there (RunR finds their
-  versions in the registry), so nothing moves in RunR. When `main` changed the images' directories
-  after the tested commit, nothing is committed, and the next run tests it again.
+  never forced), as `Burak Faruk ŞAHİN <19393636+brkfun@users.noreply.github.com>`, each commit
+  marked as the bot's by its trailer `RunR-Lang-Bot: <name> <version>` (as BRF-Tech/runr's
+  `RunR-Deps-Bot`). A language version goes into `runtimes/<runtime>/tested-versions` (a new Bun
+  minor with the lifecycle of the ones below it); a tool's, an ML framework's or a toolchain's
+  commit is its pin. The bot starts the publish workflow for those images (a push of the
+  workflow's token starts no workflow), and closes the issue with the label `lang: passed`. The
+  comment also says what RunR's last release pins of that runtime. The language runtimes pin
+  nothing there (RunR finds their versions in the registry), so nothing moves in RunR.
+- **Several green tests of one run** land one after the other on the moving `main`
+  (`ci/lang-bot.sh land`, each in a process of its own). When a test's patch no longer applies
+  because the landings before it moved the lines around it (tinygo's mirror line after rust's,
+  zig's `ARG`s after wasm-tools'), the bot makes the same bump again on the new `main` and commits
+  it only when it changes the very lines the tested patch changed (the same pins and checksums);
+  otherwise the issue gets a comment and the next run tests it again. When `main` changed the
+  images' directories after the tested commit by a commit that is not the bot's (no trailer),
+  nothing is committed, and the next run tests it again. A test the bot fails to land is reported
+  (`needs attention`, with its log); the others still land and every issue gets its comment.
 - **Red:** the label `needs attention` and a comment with what failed: the end of each failed
   job's log, into which every step of the job prints (a step that printed nothing says so instead
   of an empty block). Nothing is committed: the weekly publish holds a language version, and a
   tool, ML or toolchain pin stays where it was. Run the workflow with the issue's number to test
   it again (it takes the label off), or wait for a newer release to supersede the issue.
-- **An upstream outage** is not the release's fault, and pages nobody. The downloads retry (the
+- **An outage** is not the release's fault, and pages nobody. The downloads retry (the
   Dockerfiles' `curl`, `ci/fetch.sh` for the tools the jobs install, a GitHub release asset
   through the GitHub API when `releases/download` gives 504). A RunR suite that failed on an
-  upstream server's 5xx (a chart, an image or a package its e2e downloads) runs once more. A test
-  whose every failure is such a 5xx (`ci/lang-bot.sh upstream`: an HTTP 500/502/503/504 of a
-  public https URL on a line that failed, or a `RUN` step's `curl: (22)`; never a local address,
-  where the candidate answers) gets the label `lang: upstream outage` and a comment that says so,
-  and the next run tests it again by itself; a second outage in a row is `needs attention`.
+  outage runs once more. An outage (`ci/lang-bot.sh upstream`) is an upstream server's HTTP
+  500/502/503/504 of a public https URL on a line that failed (a chart, an image or a package the
+  build or RunR's e2e downloads), a `RUN` step's `curl: (22)`, or the registry inside the e2e's
+  Kind cluster that did not answer (a private address's `/v2/` with "unable to complete operation
+  after N attempts", Zot's "synchronization failed", "connection refused", "i/o timeout"); never
+  another local address, where the candidate answers. When RunR's e2e lists failed cases, each of
+  them must be one: a case that failed on its own (a compile error, its own output) is a failure.
+  A test whose every failure is an outage gets the label `lang: upstream outage` and a comment
+  that says so, and the next run tests it again by itself; a second outage in a row is
+  `needs attention`.
 - **The bot's own tests run on the change.** They read the pins from the files the bump moves
   (`test/catalog_test.sh`: one Spin CLI in every WebAssembly image, whichever it is;
   `test/lang_bot_test.sh` bumps from the checkout's pin to the next release), so a green

@@ -13,7 +13,8 @@
 #     nothing of RunR's private repository: no deploy key, no origin; every step of its build and
 #     e2e jobs before the suite prints into the job's log the red comment shows, a suite an upstream
 #     outage stopped runs once more, the results say an outage is one (lang-bot.sh upstream), and
-#     the outage label is made and taken off;
+#     the outage label is made and taken off; the bot commits with Burak's identity
+#     and its trailer (RunR-Lang-Bot: <name> <version>);
 #   - the publish workflow holds an untested language version (LANG_GATE), every language runtime
 #     has its tested-versions.
 #
@@ -122,6 +123,10 @@ gitcmd='^[^#]*(^|[^A-Za-z_-])git( -[cC] [^ ]+)*'
 grep -qE '^[^#]*git push -q origin HEAD:refs/heads/main \|\| rc=\$\?$' "$bot" || fail "ci/lang-bot.sh does not push exactly HEAD:refs/heads/main"
 grep -E "${gitcmd} push" "$bot" | grep -qE -- '--force|--mirror|--all|--tags|--delete| -f( |$)| -d( |$)|\+HEAD|\+refs| :refs/'   && fail "ci/lang-bot.sh forces, deletes or pushes more"
 grep -qE "${gitcmd} push" "$here/lib/watch.sh" && fail "lib/watch.sh pushes"
+# the bot's commits: Burak's identity (2026-11-11, as in BRF-Tech/runr), marked by their trailer
+grep -qxF '  LANG_BOT_NAME: Burak Faruk ŞAHİN' "$lt" && grep -qxF '  LANG_BOT_EMAIL: 19393636+brkfun@users.noreply.github.com' "$lt" \
+  || fail "lang-test.yml does not commit as Burak Faruk ŞAHİN <19393636+brkfun@users.noreply.github.com>"
+grep -qF 'LANG_TRAILER="RunR-Lang-Bot"' "$bot" && grep -qxF '${LANG_TRAILER}: ${runtime} ${full}' "$bot" || fail "ci/lang-bot.sh commits without its trailer"
 echo "ok - lang-test.yml: after the watch and by hand, contents: write in its landing alone, one push of HEAD:refs/heads/main, RunR's public last release only"
 
 # --- the publish gate -------------------------------------------------------------------------------

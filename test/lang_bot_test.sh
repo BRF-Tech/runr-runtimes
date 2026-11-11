@@ -24,14 +24,19 @@
 #   - RunR's catalog offers the runtime at the candidate alone, the e2e check finds the candidate's
 #     xaas cases (an ML runtime: its ML case) and their failures, and RunR's pins of a discovered
 #     runtime are none; a runtime RunR's release does not have is exit 3 for both;
-#   - an upstream outage is an upstream server's 5xx on a line that failed (helm's chart, a
-#     download, a RUN step's curl), never the candidate's own answer or a local address;
+#   - an outage is an upstream server's 5xx on a line that failed (helm's chart, a download, a RUN
+#     step's curl) or the e2e cluster's registry for every failed case of RunR's summary, never the
+#     candidate's own answer, another local address or a case that failed on its own;
 #   - landing: a green version, ML pin or toolchain is committed on top of main and pushed as a
-#     fast-forward with the bot's identity (a tool's pin too, a new Bun minor with the lifecycle of
-#     the one before), a suite RunR's release does not have yet counts as skipped, a red one or one
-#     without a result is labelled with what failed (never an empty log), one an upstream outage
-#     stopped is labelled for the next run (a second outage in a row asks a person), a version whose
-#     runtime changed on main since the tested commit is left for the next run.
+#     fast-forward with the bot's identity and trailer (a tool's pin too, a new Bun minor with the
+#     lifecycle of the one before), a suite RunR's release does not have yet counts as skipped, a
+#     red one or one without a result is labelled with what failed (never an empty log), one an
+#     outage stopped is labelled for the next run (a second outage in a row asks a person), a
+#     version whose runtime changed on main since the tested commit is left for the next run;
+#   - the five green toolchains of run 43020609005 (rust, spin, tinygo, wasm-tools, zig) on one
+#     base all land, a patch whose lines moved made again on the new main; one made again with
+#     other lines waits for the next run, and one the bot cannot land is reported while the others
+#     land.
 #
 #   bash test/lang_bot_test.sh
 set -euo pipefail
@@ -335,9 +340,27 @@ https://github.com/x/y/releases/download/v1/z.tar.gz: no answer after its retrie
 EOF
 out="$(bash "$bot" upstream "$tmp/outage.log")" && fail "not an outage: ${out}"
 bash "$bot" upstream "$tmp/no-such.log" >/dev/null && fail "a log that is not there"
-echo "ok - an upstream outage: an upstream server's 5xx on a line that failed, never the candidate's answer or a local address"
+# the registry inside RunR's Kind cluster (run 43020609005, maven 3.10.0): every failed case of the
+# e2e's summary failed on it, so the suite is an outage; one case that failed on its own is none
+flake='  ✗ xaas-java-25.0-http [version]: Build failed: error building image: unable to complete operation after 0 attempts, last error: GET http://10.96.189.218:5000/v2/ghcr.io/brf-tech/runr/candidates/exec-java/manifests/sha256:c50468b110658e86979291c0595d1f11aecab266c833bac54abf120115b96754: MANIFEST_UNKNOWN: synchronization failed'
+summary() { printf '  ✗ [1/9] xaas-java-25.0-http — build: Build failed\n  ✓ [2/9] xaas-java-25.0-schedule (29.3s)\n\n  Passed: 20/21  Failed: 1\n\n── Failures ──\n'; printf '%s\n' "$@"; printf '\n── Slowest ──\n  1. rt-c-http  44.1s\n'; }
+summary "$flake" > "$tmp/outage.log"
+[ "$(bash "$bot" upstream "$tmp/outage.log")" = "$flake" ] || fail "the e2e cluster's registry is no outage: $(bash "$bot" upstream "$tmp/outage.log")"
+summary "$flake" '  ✗ xaas-java-25.0-schedule [build]: Build failed: Main.java:3: error: cannot find symbol' > "$tmp/outage.log"
+out="$(bash "$bot" upstream "$tmp/outage.log")" && fail "a compile error next to the registry's flake: ${out}"
+summary '  ✗ xaas-java-25.0-http [verify]: HTTP 500 from http://10.96.2.210/fn' > "$tmp/outage.log"
+out="$(bash "$bot" upstream "$tmp/outage.log")" && fail "the candidate's own answer: ${out}"
+summary '  ✗ xaas-java-25.0-http [version]: Build failed: GET http://10.96.189.218:5000/v2/x/manifests/y: UNAUTHORIZED: authentication required' > "$tmp/outage.log"
+out="$(bash "$bot" upstream "$tmp/outage.log")" && fail "a registry that refuses: ${out}"
+# the summary decides: an upstream 5xx earlier in the log does not make a failed case an outage
+{ echo 'Error: failed to fetch https://github.com/x/y.tgz : 504 Gateway Timeout'; summary '  ✗ faas-java-25.0-http [ready]: timed out'; } > "$tmp/outage.log"
+out="$(bash "$bot" upstream "$tmp/outage.log")" && fail "a failed case next to an earlier 504: ${out}"
+echo "ok - an outage: an upstream server's 5xx on a line that failed, the e2e cluster's registry for every failed case; never the candidate's answer, a local address or a case that failed on its own"
 
 # --- landing ----------------------------------------------------------------------------------------
+# the bot's identity on main (lang-test.yml): Burak's, its commits marked by their trailer
+bot_name="Burak Faruk ŞAHİN" bot_email="19393636+brkfun@users.noreply.github.com"
+bot_id="${bot_name} <${bot_email}>"
 origin="$tmp/origin.git"
 git init -q --bare -b main "$origin"
 work="$tmp/work"
@@ -419,15 +442,21 @@ echo "RunR v0.6.7 has no bun runtime yet: its next release brings it and discove
 echo "a tool inside the image, which RunR v0.6.7 does not pin: nothing to move" > "$dir/pins/maven"
 echo "pins no version of python: it discovers them in the registry, nothing to move" > "$dir/pins/python"
 echo "the images keep their version, which RunR v0.6.7 pins (WASM_RUNTIME_VERSION): nothing to move" > "$dir/pins/tinygo"
-(cd "$work" && LANG_TODAY=2026-11-07 LANG_BOT_NAME="RunR deps bot" LANG_BOT_EMAIL="deps-bot@runr.sh" bash ci/lang-bot.sh land "$dir" https://example.test/run/9) > "$tmp/out" 2>&1 \
+(cd "$work" && LANG_TODAY=2026-11-07 LANG_BOT_NAME="$bot_name" LANG_BOT_EMAIL="$bot_email" bash ci/lang-bot.sh land "$dir" https://example.test/run/9) > "$tmp/out" 2>&1 \
   || fail "land: $(cat "$tmp/out")"
 log="$(git --git-dir="$origin" log --format='%an <%ae>|%cn <%ce>|%s' main)"
-[ "$(head -n 6 <<<"$log")" = "RunR deps bot <deps-bot@runr.sh>|RunR deps bot <deps-bot@runr.sh>|fix(java): maven ${maven_new} (was ${maven_old})
-RunR deps bot <deps-bot@runr.sh>|RunR deps bot <deps-bot@runr.sh>|feat(bun): bun 1.5 (1.5.0)
-RunR deps bot <deps-bot@runr.sh>|RunR deps bot <deps-bot@runr.sh>|fix(wasm): tinygo ${tinygo_new} (was ${tinygo_old})
-RunR deps bot <deps-bot@runr.sh>|RunR deps bot <deps-bot@runr.sh>|fix(pytorch): torch ${torch_new}, torchvision 0.30.0
-RunR deps bot <deps-bot@runr.sh>|RunR deps bot <deps-bot@runr.sh>|feat(python): python 3.16 (3.16.0)
+[ "$(head -n 6 <<<"$log")" = "${bot_id}|${bot_id}|fix(java): maven ${maven_new} (was ${maven_old})
+${bot_id}|${bot_id}|feat(bun): bun 1.5 (1.5.0)
+${bot_id}|${bot_id}|fix(wasm): tinygo ${tinygo_new} (was ${tinygo_old})
+${bot_id}|${bot_id}|fix(pytorch): torch ${torch_new}, torchvision 0.30.0
+${bot_id}|${bot_id}|feat(python): python 3.16 (3.16.0)
 someone <someone@example.test>|someone <someone@example.test>|base" ] || fail "main: ${log}"
+# each of the bot's commits says it is the bot's: RunR-Lang-Bot: <name> <version>
+[ "$(git --git-dir="$origin" log -5 --format='%(trailers:key=RunR-Lang-Bot,valueonly,separator=%x2C)' main | grep -v '^$')" = "maven ${maven_new}
+bun 1.5.0
+tinygo ${tinygo_new}
+pytorch ${torch_new}
+python 3.16.0" ] || fail "the trailers: $(git --git-dir="$origin" log -5 --format=%B main)"
 [ "$(git --git-dir="$origin" show main:runtimes/python/tested-versions | grep -v '^#')" = "3.16 3.16.0" ] || fail "main's tested-versions"
 git --git-dir="$origin" show main:runtimes/pytorch/requirements-torch.txt | grep -qxF "torch==${torch_new}" || fail "main's torch pin"
 git --git-dir="$origin" show main:runtimes/wasm-go/Dockerfile | grep -qxF "ARG TINYGO_VERSION=${tinygo_new}" && git --git-dir="$origin" show main:lib/mirror.sh | grep -qF "\"tinygo:${tinygo_new}|tinygo/tinygo:${tinygo_new}\"" \
@@ -463,11 +492,11 @@ grep -qF "$(printf 'label\t45\tlang: passed')" <<<"$actions" && grep -qF "$(prin
 grep -qF "$(printf 'unlabel\t45\tlang: upstream outage')" <<<"$actions" || fail "the outage label stayed on a green one: ${actions}"
 # zig: an outage, nobody is asked; the next run tests it again
 grep -qF "$(printf 'label\t51\tlang: upstream outage')" <<<"$actions" && ! grep -qF "$(printf 'label\t51\tneeds attention')" <<<"$actions" || fail "the outage: ${actions}"
-grep -qF '**Upstream outage: zig' "$dir/comments/51.md" && grep -qF 'wasi-sdk-34.0-x86_64-linux.tar.gz (HTTP 504)' "$dir/comments/51.md" \
+grep -qF '**Outage: zig' "$dir/comments/51.md" && grep -qF 'wasi-sdk-34.0-x86_64-linux.tar.gz (HTTP 504)' "$dir/comments/51.md" \
   && grep -qF 'test-images` on the candidate: not run (the build failed)' "$dir/comments/51.md" || fail "the outage's comment: $(cat "$dir/comments/51.md")"
 # rust: the second outage in a row asks a person, the outage label goes
 grep -qF "$(printf 'label\t52\tneeds attention')" <<<"$actions" && grep -qF "$(printf 'unlabel\t52\tlang: upstream outage')" <<<"$actions" || fail "a second outage: ${actions}"
-grep -qF 'the second run in a row' "$dir/comments/52.md" && grep -qF 'test-wasm` on the candidate: failure (run once more after an upstream outage) (an upstream outage)' "$dir/comments/52.md" \
+grep -qF 'the second run in a row' "$dir/comments/52.md" && grep -qF 'test-wasm` on the candidate: failure (run once more after an outage) (an outage)' "$dir/comments/52.md" \
   || fail "a second outage's comment: $(cat "$dir/comments/52.md")"
 # wasm-tools: red, and its comment says the log is empty instead of an empty block
 grep -qF "$(printf 'label\t53\tneeds attention')" <<<"$actions" && grep -qF 'the log is empty' "$dir/comments/53.md" || fail "an empty log: $(cat "$dir/comments/53.md")"
@@ -488,3 +517,97 @@ before="$(git --git-dir="$origin" rev-parse main)"
 [ "$(git --git-dir="$origin" rev-parse main)" = "$before" ] || fail "committed on a main whose runtime changed"
 grep -qF 'main changed `runtimes/python/`' "$dir/comments/40.md" || fail "the comment: $(cat "$dir/comments/40.md")"
 echo "ok - a version whose runtime changed on main since the tested commit is left for the next run"
+
+# --- several green toolchains of one run, all on one base (run 43020609005) -----------------------
+# rust, spin, tinygo, wasm-tools and zig, each bumped on the same main by its build job: they land
+# one after the other; a patch the landings before it moved the lines around (tinygo's mirror line
+# after rust's, zig's ARGs after wasm-tools') is made again on the new main and committed when it
+# changes the same lines
+wt_old="$(arg_in wasm-exec WASM_TOOLS_VERSION)" wt_new="$(next "$(arg_in wasm-exec WASM_TOOLS_VERSION)")"
+wt_asset() { echo "https://github.com/bytecodealliance/wasm-tools/releases/download/v$1/wasm-tools-$1-$2-linux.tar.gz"; }
+fx "$(wt_asset "$wt_new" x86_64)" 'wasm-tools amd64'
+fx "$(wt_asset "$wt_new" aarch64)" 'wasm-tools arm64'
+# zig's checksums of this release alone (never the checkout's: its patch changes them, so the
+# landing of wasm-tools moves the lines after them)
+zig_index="{\"${zig_new}\": {\"x86_64-linux\": {\"shasum\": \"$(sum "zig ${zig_new} amd64")\"}, \"aarch64-linux\": {\"shasum\": \"$(sum "zig ${zig_new} arm64")\"}}}"
+fx https://ziglang.org/download/index.json "$zig_index"
+# combo NAME [EXTRA_TEST_JSON] — a main with the WebAssembly images ($tmp/NAME.git), the five bumps
+# made on it as the build jobs make them, their results green ($tmp/NAME-lang); EXTRA_TEST_JSON goes
+# after the third
+combo() {
+  corigin="$tmp/$1.git" cwork="$tmp/$1" cdir="$tmp/$1-lang"
+  git init -q --bare -b main "$corigin"
+  git init -q -b main "$cwork"
+  mkdir -p "$cwork/runtimes" "$cdir/results" "$cdir/pins"
+  for rt in wasm-exec wasm-go wasm-js wasm-python wasm-rust; do cp -r "$here/runtimes/$rt" "$cwork/runtimes/"; done
+  cp -r "$here/ci" "$here/lib" "$cwork/"
+  (cd "$cwork" && git add -A && git commit -q -m base && git remote add origin "$corigin" && git push -q origin main)
+  ctested="$(git -C "$cwork" rev-parse HEAD)"
+  local spec issue tool ver suite key r n=0
+  : > "$cdir/tests.lines"
+  for spec in "60 rust ${new_rust} test-wasm" "61 spin ${spin_new} test-wasm" "62 tinygo ${tinygo_new} test-images" \
+    "63 wasm-tools ${wt_new} test-images" "64 zig ${zig_new} test-images"; do
+    read -r issue tool ver suite <<<"$spec"
+    key="wasm-${tool}" r="$cdir/results/lang-result-wasm-${tool}-build"
+    mkdir -p "$r" "$cdir/results/lang-result-${key}-e2e-${suite}"
+    (cd "$cwork" && bash ci/lang-bot.sh wasm-bump "$tool" "$ver" > "$r/bump.json" && git diff > "$r/pin.patch" && git checkout -q -- .)
+    jq -r .pin "$r/bump.json" > "$r/pin"
+    jq -r '.images | join(" ")' "$r/bump.json" > "$r/images"
+    echo success > "$r/status"; echo "$ctested" > "$r/sha"; echo "the end of the log" > "$r/tail.txt"
+    echo success > "$cdir/results/lang-result-${key}-e2e-${suite}/status"
+    jq -nc --argjson i "$issue" --arg r "$tool" --arg v "$ver" --arg k "$key" --arg s "$suite" \
+      '{issue: $i, kind: "wasm", runtime: $r, version: $v, full: $v, key: $k, suites: [$s]}' >> "$cdir/tests.lines"
+    n=$((n + 1))
+    if [ "$n" = 3 ] && [ -n "${2:-}" ]; then echo "$2" >> "$cdir/tests.lines"; fi
+  done
+  jq -s . "$cdir/tests.lines" > "$cdir/tests.json"
+}
+# what main should hold: the five bumps one after the other on the base
+combo combo
+cp -r "$cwork" "$tmp/combo-ref"
+for spec in "rust ${new_rust}" "spin ${spin_new}" "tinygo ${tinygo_new}" "wasm-tools ${wt_new}" "zig ${zig_new}"; do
+  read -r tool ver <<<"$spec"
+  (cd "$tmp/combo-ref" && bash ci/lang-bot.sh wasm-bump "$tool" "$ver" >/dev/null) || fail "the reference's ${tool} bump"
+done
+(cd "$cwork" && LANG_BOT_NAME="$bot_name" LANG_BOT_EMAIL="$bot_email" bash ci/lang-bot.sh land "$cdir" https://example.test/run/11) > "$tmp/out" 2>&1 \
+  || fail "land of the five: $(cat "$tmp/out")"
+[ "$(git --git-dir="$corigin" log --format='%s' main)" = "fix(wasm): zig ${zig_new} (was ${zig_old})
+fix(wasm): wasm-tools ${wt_new} (was ${wt_old})
+fix(wasm): tinygo ${tinygo_new} (was ${tinygo_old})
+fix(wasm): spin ${spin_new} (was ${spin_old})
+fix(wasm): rust ${new_rust} (was ${old_rust})
+base" ] || fail "the five on main: $(git --git-dir="$corigin" log --format='%s' main) $(cat "$tmp/out")"
+for f in runtimes/wasm-exec/Dockerfile runtimes/wasm-go/Dockerfile runtimes/wasm-js/Dockerfile runtimes/wasm-python/Dockerfile runtimes/wasm-rust/Dockerfile lib/mirror.sh; do
+  [ "$(git --git-dir="$corigin" show "main:$f")" = "$(cat "$tmp/combo-ref/$f")" ] || fail "main's ${f} is not the five bumps: $(git --git-dir="$corigin" diff "$ctested" main -- "$f")"
+done
+actions="$(cat "$cdir/actions")"
+for i in 60 61 62 63 64; do
+  grep -qF "$(printf 'label\t%s\tlang: passed' "$i")" <<<"$actions" && grep -qF "$(printf 'close\t%s' "$i")" <<<"$actions" || fail "#${i} not passed: ${actions}"
+done
+grep -qF 'made again on main' "$cdir/comments/62.md" && git --git-dir="$corigin" log -1 --format=%B --grep="^fix(wasm): tinygo" main | tr '\n' ' ' | grep -qF 'Made again on main' \
+  || fail "tinygo was not made again after rust's mirror line: $(cat "$cdir/comments/62.md")"
+[ "$(git --git-dir="$corigin" log -5 --format='%an <%ae>|%(trailers:key=RunR-Lang-Bot,valueonly,separator=%x2C)' main | grep -c "^${bot_id}|[a-z-]* [0-9.]*$")" = 5 ] \
+  || fail "the five commits' identity and trailer: $(git --git-dir="$corigin" log -5 --format='%an <%ae>|%B' main)"
+echo "ok - five green toolchains of one base land one after the other, those whose lines moved made again on the new main: main holds the five bumps"
+
+# made again, zig's checksums are other ones (its index changed since the build): not committed, the
+# next run tests it; a test the bot cannot land (its result has no tested commit) is reported and the
+# others still land
+combo combo2 '{"issue": 65, "kind": "wasm", "runtime": "spin-sdk", "version": "9.9.9", "full": "9.9.9", "key": "wasm-broken", "suites": []}'
+mkdir -p "$cdir/results/lang-result-wasm-broken-build"
+echo success > "$cdir/results/lang-result-wasm-broken-build/status"
+echo wasm-python > "$cdir/results/lang-result-wasm-broken-build/images"
+fx https://ziglang.org/download/index.json "{\"${zig_new}\": {\"x86_64-linux\": {\"shasum\": \"$(printf 'c%.0s' {1..64})\"}, \"aarch64-linux\": {\"shasum\": \"$(printf 'd%.0s' {1..64})\"}}}"
+(cd "$cwork" && LANG_BOT_NAME="$bot_name" LANG_BOT_EMAIL="$bot_email" bash ci/lang-bot.sh land "$cdir" https://example.test/run/12) > "$tmp/out" 2>&1 \
+  || fail "land with a broken one: $(cat "$tmp/out")"
+fx https://ziglang.org/download/index.json "$zig_index"
+[ "$(git --git-dir="$corigin" log --format='%s' main | head -n 4 | sed 's/ .*//' | paste -sd ' ' -)" = "fix(wasm): fix(wasm): fix(wasm): fix(wasm):" ] \
+  && ! git --git-dir="$corigin" log --format='%s' main | grep -qF 'zig' || fail "zig with other checksums was committed: $(git --git-dir="$corigin" log --format='%s' main)"
+actions="$(cat "$cdir/actions")"
+grep -qF 'is not the change the bot tested' "$cdir/comments/64.md" && grep -qF "$(printf 'comment\t64\t')" <<<"$actions" \
+  && ! grep -qE "$(printf '(label|close)\t64')" <<<"$actions" || fail "zig made again otherwise: ${actions} $(cat "$cdir/comments/64.md" 2>/dev/null)"
+grep -qF "$(printf 'label\t65\tneeds attention')" <<<"$actions" && grep -qF 'the bot could not land spin-sdk 9.9.9' "$cdir/comments/65.md" \
+  || fail "the broken one: ${actions} $(cat "$cdir/comments/65.md" 2>/dev/null)"
+for i in 60 61 62 63; do grep -qF "$(printf 'label\t%s\tlang: passed' "$i")" <<<"$actions" || fail "#${i} after the broken one: ${actions}"; done
+[ -z "$(git -C "$cwork" status --porcelain)" ] || fail "the checkout is left dirty: $(git -C "$cwork" status --porcelain)"
+echo "ok - a bump made again with other lines waits for the next run; a test the bot cannot land is reported, the others still land"

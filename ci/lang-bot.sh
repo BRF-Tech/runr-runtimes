@@ -51,35 +51,49 @@
 #       the e2e's results show the xaas cases of RUNTIME at VERSION (--ml: its ML case), and none
 #       of them failed
 #   ci/lang-bot.sh upstream LOG
-#       the lines (at most 5) of a test job's LOG that show an upstream server's outage: an HTTP
-#       500, 502, 503 or 504 of a public https URL on a line that says it failed (helm's "failed to
-#       fetch https://…: 504 Gateway Timeout", the "download failed: URL (HTTP 504)" of
-#       lib/fetch.sh and of the WebAssembly Dockerfiles), or curl's "(22) The requested URL
-#       returned error: 504" in an image build's RUN step. A local or private address is the
-#       candidate's, never an upstream. Exit 1: none
+#       the lines (at most 5) of a test job's LOG that show an outage, not the release's fault:
+#       an upstream server's HTTP 500, 502, 503 or 504 of a public https URL on a line that says
+#       it failed (helm's "failed to fetch https://…: 504 Gateway Timeout", the "download failed:
+#       URL (HTTP 504)" of lib/fetch.sh and of the WebAssembly Dockerfiles), curl's "(22) The
+#       requested URL returned error: 504" in an image build's RUN step, or the registry inside
+#       RunR's e2e cluster that did not answer (a private address's /v2/ with "unable to complete
+#       operation after N attempts", "synchronization failed", "connection refused" or "i/o
+#       timeout"). Any other local or private address is the candidate's, never an outage. When
+#       the log has RunR's e2e summary ("── Failures ──"), every failed case there must be one:
+#       a case that failed for its own reason (a compile error, its own output) makes it none.
+#       Exit 1: none
 #   ci/lang-bot.sh runr-pins RUNR RUNTIME
 #       what a checkout of RunR (its last release) pins of RUNTIME's versions: "discovered" (exit 0:
 #       RunR finds them in the registry, nothing to move), or the pins (exit 2: a person moves them);
 #       exit 3: that release has no RUNTIME yet
 #   ci/lang-bot.sh land DIR RUN_URL
 #       after the test jobs (DIR/tests.json, their results in DIR/results/<artifact>/, RunR's pins
-#       in DIR/pins/<runtime>): every green test is committed on top of main (the version into
-#       tested-versions, or the ML or toolchain pin) when main did not change its images since the
-#       tested commit (a new version of a runtime that supports only its newest release also
-#       deprecates the published ones below it: lifecycle), and pushed as
-#       `git push origin HEAD:refs/heads/main`, a fast-forward (the
-#       bot's identity LANG_BOT_NAME, LANG_BOT_EMAIL). A red test is labelled "needs attention" with
-#       the end of the failed jobs' logs, unless each of its failures is an upstream outage (their
-#       result's upstream file): then it is labelled "lang: upstream outage" and the next run tests
-#       it again; a second outage in a row is "needs attention". DIR/actions: what the issues get,
-#       one action per line (comment ISSUE FILE, label ISSUE LABEL, unlabel ISSUE LABEL, close
-#       ISSUE, publish IMAGES)
+#       in DIR/pins/<runtime>): every green test is committed on top of main, one after the other
+#       (the version into tested-versions, or the ML, tool or toolchain pin), and pushed as
+#       `git push origin HEAD:refs/heads/main`, a fast-forward, as LANG_BOT_NAME <LANG_BOT_EMAIL>
+#       with the trailer "RunR-Lang-Bot: <name> <version>". A new version of a runtime that
+#       supports only its newest release also deprecates the published ones below it (lifecycle).
+#       A green test waits for the next run when main changed its images since the tested commit by
+#       a commit that is not one of the bot's (the trailer). When its patch no longer applies
+#       because this run's landings moved the lines around it, the same bump is made again on the
+#       new main and committed only when it changes the very lines the tested patch changed; else
+#       it waits for the next run. A red test is labelled "needs attention" with the end of the
+#       failed jobs' logs, unless each of its failures is an outage (their result's upstream file:
+#       lang-bot.sh upstream): then it is labelled "lang: upstream outage" and the next run tests
+#       it again; a second outage in a row is "needs attention". Each test lands in a process of
+#       its own: one that fails is reported ("needs attention", with its log) and the others still
+#       land. DIR/actions: what the issues get, one action per line (comment ISSUE FILE, label
+#       ISSUE LABEL, unlabel ISSUE LABEL, close ISSUE, publish IMAGES)
 #
 # Needs bash, jq, curl (ml-bump, wasm-bump, tool-bump), sha256sum, sha512sum and GNU sed, sort and
 # date.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# the checkout the bot reads and writes: its own, or LANG_BOT_ROOT (land runs a copy of the bot
+# taken when it started on the checkout it moves along main)
+ROOT="${LANG_BOT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# the trailer of the bot's commits on main: "RunR-Lang-Bot: <name> <version>"
+LANG_TRAILER="RunR-Lang-Bot"
 PASSED_LABEL="${LANG_PASSED_LABEL:-lang: passed}"
 ATTENTION_LABEL="${LANG_ATTENTION_LABEL:-needs attention}"
 OUTAGE_LABEL="${LANG_OUTAGE_LABEL:-lang: upstream outage}"
@@ -490,10 +504,30 @@ cmd_upstream() {
       }
       return 0
     }
-    n < 5 && /(^|[^0-9A-Za-z])50[0234]([^0-9A-Za-z]|$)|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out/ &&
-      /[Ff]ail|[Ee]rror|ERROR/ && public($0) { print; n++; next }
-    n < 5 && /^(#[0-9]+ )?[0-9]+\.[0-9]+ curl: \(22\) The requested URL returned error: 50[0234]/ { print; n++ }
-    END { exit n ? 0 : 1 }
+    # an outage: a 5xx of an upstream server, the curl (22) 5xx of a RUN step, the registry of the
+    # e2e cluster
+    function outage(s) {
+      if (s ~ /(^|[^0-9A-Za-z])50[0234]([^0-9A-Za-z]|$)|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out/ &&
+        s ~ /[Ff]ail|[Ee]rror|ERROR/ && public(s)) return 1
+      if (s ~ /^(#[0-9]+ )?[0-9]+\.[0-9]+ curl: \(22\) The requested URL returned error: 50[0234]/) return 1
+      if (s ~ /https?:\/\/(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)[0-9.]+(:[0-9]+)?\/v2\// &&
+        s ~ /unable to complete operation after [0-9]+ attempts|synchronization failed|connection refused|i\/o timeout/) return 1
+      return 0
+    }
+    # RunR e2e summary: its failed cases
+    index($0, "── Failures ──") { infail = 1; next }
+    infail && index($0, "── ") { infail = 0 }
+    infail && index($0, "✗") { cases++; if (outage($0)) { if (c < 5) failing[++c] = $0 } else own = 1; next }
+    n < 5 && outage($0) { found[++n] = $0 }
+    END {
+      if (cases) {
+        if (own) exit 1
+        for (i = 1; i <= c; i++) print failing[i]
+        exit 0
+      }
+      for (i = 1; i <= n; i++) print found[i]
+      exit n ? 0 : 1
+    }
   ' "$log"
 }
 
@@ -533,188 +567,303 @@ tail_of() {
 # result: lang-bot.sh upstream), none when it failed for another reason
 upstream_of() { cat "$1/results/$2/upstream" 2>/dev/null || true; }
 
+# changes — the lines the diff on stdin changes, each with its file, sorted: what a bump changed,
+# whatever the lines around it
+changes() {
+  awk '
+    /^diff --git / { hdr = 1; next }
+    hdr && /^\+\+\+ / { file = $2; next }
+    /^@@/ { hdr = 0; next }
+    !hdr && /^[+-]/ { print file "\t" $0 }
+  ' | LC_ALL=C sort
+}
+
+# bump_again KIND RUNTIME FULL — the bump of a tool, ML or toolchain test made again on this
+# checkout, as the build job made it (lang-bot.sh tool-bump, ml-bump, wasm-bump)
+bump_again() {
+  case "$1" in
+    tool) bash "$LANG_BOT_SELF" tool-bump "$2" "$3" ;;
+    ml) bash "$LANG_BOT_SELF" ml-bump "$2" "$3" ;;
+    wasm) bash "$LANG_BOT_SELF" wasm-bump "$2" "$3" ;;
+    *) return 1 ;;
+  esac
+}
+
 cmd_land() {
-  local dir="${1:?usage: lang-bot.sh land DIR RUN_URL}" run_url="${2:?}" n i test issue kind runtime version full key build
-  local tested comment name subject sha pins rc suite suites failed paths images publish lines note body older deprecated outage retest
-  mkdir -p "$dir/comments"
+  local dir="${1:?usage: lang-bot.sh land DIR RUN_URL}" run_url="${2:?}" n i test issue runtime full rc log
+  mkdir -p "$dir/comments" "$dir/actions.d" "$dir/bot"
   : > "$dir/actions"
+  # the bot as it started: the checkout moves along main while it lands
+  cp "${BASH_SOURCE[0]}" "$dir/bot/lang-bot.sh"
+  export LANG_BOT_ROOT="$ROOT" LANG_BOT_SELF="$dir/bot/lang-bot.sh"
   n="$(jq length "$dir/tests.json")"
   for ((i = 0; i < n; i++)); do
     test="$(jq -c ".[$i]" "$dir/tests.json")"
-    issue="$(jq -r .issue <<< "$test")"; kind="$(jq -r .kind <<< "$test")"; runtime="$(jq -r .runtime <<< "$test")"
-    version="$(jq -r .version <<< "$test")"; full="$(jq -r .full <<< "$test")"; key="$(jq -r .key <<< "$test")"
-    suites="$(jq -r '.suites // [] | join(" ")' <<< "$test")"
-    comment="$dir/comments/${issue}.md"
-    build="$(status "$dir" "lang-result-${key}-build")"
-    # every result: "build" and one per RunR suite; a suite RunR's release does not have yet is skipped
-    failed=""
-    [ "$build" = success ] || failed="build"
-    lines="- build, smoke test and this repository's tests: ${build}"
-    # the images the test built: the runtime's, or a tool's or toolchain's (tool-bump and wasm-bump
-    # list them)
-    images="$runtime"
-    if [ "$kind" = wasm ] || [ "$kind" = tool ]; then
-      images="$(cat "$dir/results/lang-result-${key}-build/images" 2>/dev/null || true)"
-      if [ -z "$images" ] && [ "$build" = success ]; then
-        failed="build"
-        lines="${lines} (it named no image it built)"
-      fi
-    fi
-    [ -z "$(upstream_of "$dir" "lang-result-${key}-build")" ] || lines="${lines} (an upstream outage)"
-    for suite in $suites; do
-      name="lang-result-${key}-e2e-${suite}"
-      rc="$(status "$dir" "$name")"
-      note=""
-      [ "$rc" != skipped ] || note=" ($(cat "$dir/results/${name}/reason" 2>/dev/null || echo "no reason given"))"
-      if [ "$build" != success ]; then
-        # the e2e job deploys the build's candidate: there was none
-        lines="${lines}"$'\n'"- RunR's \`ci.sh ${suite}\` on the candidate: not run (the build failed)"
-        continue
-      fi
-      [ ! -f "$dir/results/${name}/retried" ] || note="${note} (run once more after an upstream outage)"
-      [ -z "$(upstream_of "$dir" "$name")" ] || note="${note} (an upstream outage)"
-      lines="${lines}"$'\n'"- RunR's \`ci.sh ${suite}\` on the candidate: ${rc}${note}"
-      case "$rc" in success|skipped) ;; *) failed="${failed:+${failed} }e2e-${suite}" ;; esac
-    done
-    [ -n "$suites" ] || lines="${lines}"$'\n'"- RunR's e2e: none of its cases deploys this image (the smoke test checks it)"
-    # every failure an upstream server's 5xx (lang-bot.sh upstream): not the release's fault
-    outage=""
-    if [ -n "$failed" ]; then
-      outage=1
-      for name in $failed; do
-        [ -n "$(upstream_of "$dir" "lang-result-${key}-${name}")" ] || { outage=""; break; }
-      done
-    fi
-    retest="$(jq -r '.outage // false' <<< "$test")"
-    if [ -n "$outage" ] && [ "$retest" != true ]; then
-      # nobody is asked: the next run tests it again (plan: the label is no reason to wait)
-      {
-        echo "**Upstream outage: ${runtime} ${full} was not tested to the end.** A server the test downloads from answered with an HTTP 5xx error, which is not this release's fault. Nothing was published or committed, and nobody needs to act: the next run of the language bot tests it again (label \`${OUTAGE_LABEL}\`); a second outage in a row asks a person."
-        echo ""
-        echo "$lines"
-        for name in $failed; do
-          echo ""
-          echo "<details><summary>${name}: the outage</summary>"
-          echo ""
-          echo '```'
-          upstream_of "$dir" "lang-result-${key}-${name}"
-          echo '```'
-          echo ""
-          echo "</details>"
-        done
-        echo ""
-        echo "Run: ${run_url}."
-      } > "$comment"
-      printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" "$issue" "$comment" >> "$dir/actions"
-      continue
-    fi
-    if [ -n "$failed" ]; then
-      {
-        if [ -n "$outage" ]; then
-          echo "**Needs attention: ${runtime} ${full} hit an upstream outage the second run in a row.** A server the test downloads from answered with an HTTP 5xx error again: a person looks whether it is down for longer. Nothing was published or committed: the weekly publish holds it."
-        else
-          echo "**Needs attention: ${runtime} ${full} failed.** Nothing was published or committed: the weekly publish holds it."
-        fi
-        echo ""
-        echo "$lines"
-        for name in $failed; do
-          [ -d "$dir/results/lang-result-${key}-${name}" ] || continue
-          echo ""
-          echo "<details><summary>${name}: what failed</summary>"
-          echo ""
-          tail_of "$dir" "lang-result-${key}-${name}"
-          echo ""
-          echo "</details>"
-        done
-        echo ""
-        echo "Run: ${run_url}. Fix it (or decide the version waits), then run **Actions → Language tests → Run workflow** with this issue's number; a newer release supersedes this issue by itself."
-      } > "$comment"
-      printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$ATTENTION_LABEL" "$issue" "$comment" >> "$dir/actions"
-      [ "$retest" != true ] || printf 'unlabel\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" >> "$dir/actions"
-      continue
-    fi
-    [ "$retest" != true ] || printf 'unlabel\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" >> "$dir/actions"
-
-    # green: the change on top of main, when main did not change its images since the tested commit
-    tested="$(cat "$dir/results/lang-result-${key}-build/sha")"
-    paths=()
-    for name in $images; do paths+=("runtimes/${name}/"); done
-    git fetch -q origin main
-    if ! git diff --quiet "$tested" origin/main -- "${paths[@]}" ':(exclude)runtimes/*/tested-versions'; then
-      echo "**${runtime} ${full} passed on ${tested:0:12}, but main changed \`${paths[*]}\` since then.** Nothing was committed: the next run tests it again on the new main (${run_url})." > "$comment"
-      printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$dir/actions"
-      continue
-    fi
-    git checkout -q --detach origin/main
-    deprecated=""
-    case "$kind" in
-      language)
-        bash "$ROOT/ci/lang-bot.sh" tested "$runtime" "$version" "$full"
-        # a version that had no tag yet is a new one
-        if ! grep -qxF "$version" "$dir/results/lang-result-${key}-build/published" 2>/dev/null; then
-          subject="feat(${runtime}): ${runtime} ${version} (${full})"
-          # a runtime that supports only its newest release (Bun): the published versions below it
-          # are deprecated, with a sunset date
-          if [ "$(filter_of "$runtime")" = newest-minor ]; then
-            for older in $(grep -xE '[0-9]+\.[0-9]+' "$dir/results/lang-result-${key}-build/published" 2>/dev/null | sort -V); do
-              if [ "$older" != "$version" ] && version_gte "$version" "$older" && note="$(bash "$ROOT/ci/lang-bot.sh" lifecycle "$runtime" "$older")"; then
-                deprecated="${deprecated:+${deprecated}; }${note}"
-              fi
-            done
-          fi
-        else
-          subject="fix(${runtime}): ${runtime} ${full}"
-        fi ;;
-      tool)
-        git apply "$dir/results/lang-result-${key}-build/pin.patch"
-        subject="fix(${images%% *}): $(cat "$dir/results/lang-result-${key}-build/pin" 2>/dev/null || echo "${runtime} ${full}")" ;;
-      ml)
-        git apply "$dir/results/lang-result-${key}-build/pin.patch"
-        subject="fix(${runtime}): $(cat "$dir/results/lang-result-${key}-build/pin" 2>/dev/null || echo "${runtime} ${full}")" ;;
-      wasm)
-        git apply "$dir/results/lang-result-${key}-build/pin.patch"
-        subject="fix(wasm): $(cat "$dir/results/lang-result-${key}-build/pin" 2>/dev/null || echo "${runtime} ${full}")" ;;
-    esac
-    if git diff --quiet; then
-      echo "**Nothing to do: main has ${runtime} ${full} already** (${run_url})." > "$comment"
-      printf 'comment\t%s\t%s\nclose\t%s\n' "$issue" "$comment" "$issue" >> "$dir/actions"
-      continue
-    fi
-    body="The language bot built ${images// /, } on ${runtime} ${full}, smoke-tested them and ran this repository's tests before this commit"
-    [ -z "$suites" ] || body="${body}, and RunR's e2e (${suites// /, }) on the candidate images"
-    body="${body}: ${run_url}."
-    [ -z "$deprecated" ] || body="${body} ${runtime} supports only its newest release: versionDiscovery.lifecycle deprecates ${deprecated}."
-    body="$(fold -s -w 98 <<< "${body}" | sed 's/ *$//')"
-    GIT_AUTHOR_NAME="${LANG_BOT_NAME:?}" GIT_AUTHOR_EMAIL="${LANG_BOT_EMAIL:?}" GIT_COMMITTER_NAME="$LANG_BOT_NAME" GIT_COMMITTER_EMAIL="$LANG_BOT_EMAIL" \
-      git commit -q -a -F - <<EOF
-${subject}
-
-${body}
-EOF
-    # a fast-forward of main, never forced; a main that moved meanwhile is left as it is
+    issue="$(jq -r .issue <<< "$test")"; runtime="$(jq -r .runtime <<< "$test")"; full="$(jq -r .full <<< "$test")"
+    log="$dir/land-${i}.log"
+    rm -f -- "$dir/actions.d/${i}"
     rc=0
-    git push -q origin HEAD:refs/heads/main || rc=$?
-    if [ "$rc" != 0 ]; then
-      echo "**${runtime} ${full} passed, but main moved while the bot committed it.** Nothing was pushed: the next run tests it again (${run_url})." > "$comment"
-      printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$dir/actions"
+    bash "$LANG_BOT_SELF" land-one "$dir" "$i" "$run_url" > "$log" 2>&1 || rc=$?
+    cat "$log"
+    if [ "$rc" = 0 ] && [ -f "$dir/actions.d/${i}" ]; then
+      cat "$dir/actions.d/${i}" >> "$dir/actions"
       continue
     fi
-    sha="$(git rev-parse HEAD)"
-    pins="$(cat "$dir/pins/${runtime}" 2>/dev/null || echo "not checked")"
-    publish="${images// /,}"
-    note=""
-    [ "$kind" != ml ] || note=" (the -gpu image with the next heavy-images run)"
+    # it failed in the middle: the issue hears of it, the checkout is clean for the next one
+    git reset -q --hard 2>/dev/null || true
+    git clean -fdq 2>/dev/null || true
     {
-      echo "**Passed: ${runtime} ${full}** is on main as ${sha}; the publish workflow publishes ${images// /, } now${note}."
+      echo "**Needs attention: the bot could not land ${runtime} ${full}** (\`ci/lang-bot.sh land\`, exit ${rc}). Nothing of it was committed; the other tests of the run were landed and reported."
+      echo ""
+      echo '```'
+      tail -n 30 "$log"
+      echo '```'
+      echo ""
+      echo "Run: ${run_url}. Fix the bot (or land it by hand), then run **Actions → Language tests → Run workflow** with this issue's number."
+    } > "$dir/comments/${issue}.md"
+    printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$ATTENTION_LABEL" "$issue" "$dir/comments/${issue}.md" >> "$dir/actions"
+  done
+}
+
+# land-one DIR INDEX RUN_URL — the landing of one test of DIR/tests.json (cmd_land runs it), its
+# actions in DIR/actions.d/INDEX
+cmd_land_one() {
+  local dir="${1:?usage: lang-bot.sh land-one DIR INDEX RUN_URL}" i="${2:?}" run_url="${3:?}" test issue kind runtime version full key build
+  local tested comment name subject sha pins rc suite suites failed paths images publish lines note body older deprecated outage retest
+  local actions patch foreign again
+  test="$(jq -c ".[$i]" "$dir/tests.json")"
+  actions="$dir/actions.d/${i}"
+  : > "$actions.tmp"
+  issue="$(jq -r .issue <<< "$test")"; kind="$(jq -r .kind <<< "$test")"; runtime="$(jq -r .runtime <<< "$test")"
+  version="$(jq -r .version <<< "$test")"; full="$(jq -r .full <<< "$test")"; key="$(jq -r .key <<< "$test")"
+  suites="$(jq -r '.suites // [] | join(" ")' <<< "$test")"
+  comment="$dir/comments/${issue}.md"
+  build="$(status "$dir" "lang-result-${key}-build")"
+  # every result: "build" and one per RunR suite; a suite RunR's release does not have yet is skipped
+  failed=""
+  [ "$build" = success ] || failed="build"
+  lines="- build, smoke test and this repository's tests: ${build}"
+  # the images the test built: the runtime's, or a tool's or toolchain's (tool-bump and wasm-bump
+  # list them)
+  images="$runtime"
+  if [ "$kind" = wasm ] || [ "$kind" = tool ]; then
+    images="$(cat "$dir/results/lang-result-${key}-build/images" 2>/dev/null || true)"
+    if [ -z "$images" ] && [ "$build" = success ]; then
+      failed="build"
+      lines="${lines} (it named no image it built)"
+    fi
+  fi
+  [ -z "$(upstream_of "$dir" "lang-result-${key}-build")" ] || lines="${lines} (an outage)"
+  for suite in $suites; do
+    name="lang-result-${key}-e2e-${suite}"
+    rc="$(status "$dir" "$name")"
+    note=""
+    [ "$rc" != skipped ] || note=" ($(cat "$dir/results/${name}/reason" 2>/dev/null || echo "no reason given"))"
+    if [ "$build" != success ]; then
+      # the e2e job deploys the build's candidate: there was none
+      lines="${lines}"$'\n'"- RunR's \`ci.sh ${suite}\` on the candidate: not run (the build failed)"
+      continue
+    fi
+    [ ! -f "$dir/results/${name}/retried" ] || note="${note} (run once more after an outage)"
+    [ -z "$(upstream_of "$dir" "$name")" ] || note="${note} (an outage)"
+    lines="${lines}"$'\n'"- RunR's \`ci.sh ${suite}\` on the candidate: ${rc}${note}"
+    case "$rc" in success|skipped) ;; *) failed="${failed:+${failed} }e2e-${suite}" ;; esac
+  done
+  [ -n "$suites" ] || lines="${lines}"$'\n'"- RunR's e2e: none of its cases deploys this image (the smoke test checks it)"
+  # every failure an outage (lang-bot.sh upstream): not the release's fault
+  outage=""
+  if [ -n "$failed" ]; then
+    outage=1
+    for name in $failed; do
+      [ -n "$(upstream_of "$dir" "lang-result-${key}-${name}")" ] || { outage=""; break; }
+    done
+  fi
+  retest="$(jq -r '.outage // false' <<< "$test")"
+  if [ -n "$outage" ] && [ "$retest" != true ]; then
+    # nobody is asked: the next run tests it again (plan: the label is no reason to wait)
+    {
+      echo "**Outage: ${runtime} ${full} was not tested to the end.** Something the test depends on failed: an upstream server's HTTP 5xx, or the registry inside RunR's e2e cluster (below). That is not this release's fault. Nothing was published or committed, and nobody needs to act: the next run of the language bot tests it again (label \`${OUTAGE_LABEL}\`); a second outage in a row asks a person."
       echo ""
       echo "$lines"
-      echo "- RunR: ${pins}"
-      [ -z "$deprecated" ] || echo "- ${runtime} supports only its newest release: \`runtimes/${runtime}/runtime.yaml\` deprecates ${deprecated} (RunR reads it from the runtime catalog)"
+      for name in $failed; do
+        echo ""
+        echo "<details><summary>${name}: the outage</summary>"
+        echo ""
+        echo '```'
+        upstream_of "$dir" "lang-result-${key}-${name}"
+        echo '```'
+        echo ""
+        echo "</details>"
+      done
       echo ""
       echo "Run: ${run_url}."
     } > "$comment"
-    printf 'label\t%s\t%s\ncomment\t%s\t%s\nclose\t%s\npublish\t%s\n' "$issue" "$PASSED_LABEL" "$issue" "$comment" "$issue" "$publish" >> "$dir/actions"
-  done
+    printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" "$issue" "$comment" >> "$actions.tmp"
+    mv "$actions.tmp" "$actions"
+    return 0
+  fi
+  if [ -n "$failed" ]; then
+    {
+      if [ -n "$outage" ]; then
+        echo "**Needs attention: ${runtime} ${full} hit an outage the second run in a row.** An upstream server or the registry inside RunR's e2e cluster failed again: a person looks whether it is down for longer. Nothing was published or committed: the weekly publish holds it."
+      else
+        echo "**Needs attention: ${runtime} ${full} failed.** Nothing was published or committed: the weekly publish holds it."
+      fi
+      echo ""
+      echo "$lines"
+      for name in $failed; do
+        [ -d "$dir/results/lang-result-${key}-${name}" ] || continue
+        echo ""
+        echo "<details><summary>${name}: what failed</summary>"
+        echo ""
+        tail_of "$dir" "lang-result-${key}-${name}"
+        echo ""
+        echo "</details>"
+      done
+      echo ""
+      echo "Run: ${run_url}. Fix it (or decide the version waits), then run **Actions → Language tests → Run workflow** with this issue's number; a newer release supersedes this issue by itself."
+    } > "$comment"
+    printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$ATTENTION_LABEL" "$issue" "$comment" >> "$actions.tmp"
+    [ "$retest" != true ] || printf 'unlabel\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" >> "$actions.tmp"
+    mv "$actions.tmp" "$actions"
+    return 0
+  fi
+  [ "$retest" != true ] || printf 'unlabel\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" >> "$actions.tmp"
+
+  # green: the change on top of main as it is now, after the landings before it in this run
+  tested="$(cat "$dir/results/lang-result-${key}-build/sha")"
+  [ -n "$tested" ] || { echo "no tested commit in the build's result" >&2; return 1; }
+  paths=()
+  for name in $images; do paths+=("runtimes/${name}/"); done
+  git fetch -q origin main
+  git reset -q --hard
+  git checkout -q --detach origin/main
+  # main changed the images since the tested commit, other than by the bot's own landings (its
+  # trailer): the next run tests it on that main
+  foreign="$(git log --format="%h %(trailers:key=${LANG_TRAILER},valueonly,separator=%x2C)" "${tested}..HEAD" -- "${paths[@]}" ':(exclude)runtimes/*/tested-versions' \
+    | awk 'NF == 1 { print $1 }' | paste -sd ' ' -)"
+  if [ -n "$foreign" ]; then
+    echo "**${runtime} ${full} passed on ${tested:0:12}, but main changed \`${paths[*]}\` since then (${foreign}).** Nothing was committed: the next run tests it again on the new main (${run_url})." > "$comment"
+    printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
+    mv "$actions.tmp" "$actions"
+    return 0
+  fi
+  deprecated=""
+  again=""
+  case "$kind" in
+    language)
+      bash "$LANG_BOT_SELF" tested "$runtime" "$version" "$full"
+      # a version that had no tag yet is a new one
+      if ! grep -qxF "$version" "$dir/results/lang-result-${key}-build/published" 2>/dev/null; then
+        subject="feat(${runtime}): ${runtime} ${version} (${full})"
+        # a runtime that supports only its newest release (Bun): the published versions below it
+        # are deprecated, with a sunset date
+        if [ "$(filter_of "$runtime")" = newest-minor ]; then
+          for older in $(grep -xE '[0-9]+\.[0-9]+' "$dir/results/lang-result-${key}-build/published" 2>/dev/null | sort -V); do
+            if [ "$older" != "$version" ] && version_gte "$version" "$older" && note="$(bash "$LANG_BOT_SELF" lifecycle "$runtime" "$older")"; then
+              deprecated="${deprecated:+${deprecated}; }${note}"
+            fi
+          done
+        fi
+      else
+        subject="fix(${runtime}): ${runtime} ${full}"
+      fi ;;
+    tool|ml|wasm)
+      patch="$dir/results/lang-result-${key}-build/pin.patch"
+      if git apply --check "$patch" 2>/dev/null; then
+        git apply "$patch"
+      else
+        # the landings before it moved the lines around its change: the same bump on this main,
+        # committed only when it changes what the tested patch changed, line for line
+        again="1"
+        if ! bump_again "$kind" "$runtime" "$full" > "$dir/bump-again-${i}.out" 2>&1; then
+          git reset -q --hard
+          {
+            echo "**${runtime} ${full} passed, but its change does not apply to main any more, and its bump does not run on the new main.** Nothing was committed: the next run tests it again on the new main (${run_url})."
+            echo ""
+            echo '```'
+            tail -n 20 "$dir/bump-again-${i}.out"
+            echo '```'
+          } > "$comment"
+          printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
+          mv "$actions.tmp" "$actions"
+          return 0
+        fi
+        if ! git diff --quiet && [ "$(changes < "$patch")" != "$(git diff | changes)" ]; then
+          {
+            echo "**${runtime} ${full} passed, but main moved under its change: made again on the new main, it is not the change the bot tested.** Nothing was committed: the next run tests it again on the new main (${run_url})."
+            echo ""
+            echo "<details><summary>tested and made again</summary>"
+            echo ""
+            echo '```diff'
+            changes < "$patch" | cut -f 2-
+            echo '```'
+            echo ""
+            echo '```diff'
+            git diff | changes | cut -f 2-
+            echo '```'
+            echo ""
+            echo "</details>"
+          } > "$comment"
+          git reset -q --hard
+          printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
+          mv "$actions.tmp" "$actions"
+          return 0
+        fi
+      fi
+      case "$kind" in
+        tool) subject="fix(${images%% *}): " ;;
+        ml) subject="fix(${runtime}): " ;;
+        wasm) subject="fix(wasm): " ;;
+      esac
+      subject="${subject}$(cat "$dir/results/lang-result-${key}-build/pin" 2>/dev/null || echo "${runtime} ${full}")" ;;
+  esac
+  if git diff --quiet; then
+    echo "**Nothing to do: main has ${runtime} ${full} already** (${run_url})." > "$comment"
+    printf 'comment\t%s\t%s\nclose\t%s\n' "$issue" "$comment" "$issue" >> "$actions.tmp"
+    mv "$actions.tmp" "$actions"
+    return 0
+  fi
+  body="The language bot built ${images// /, } on ${runtime} ${full}, smoke-tested them and ran this repository's tests before this commit"
+  [ -z "$suites" ] || body="${body}, and RunR's e2e (${suites// /, }) on the candidate images"
+  body="${body}: ${run_url}."
+  [ -z "$again" ] || body="${body} Made again on main after the bot's landings before it in the run: the same lines as the tested change, only the lines around them moved."
+  [ -z "$deprecated" ] || body="${body} ${runtime} supports only its newest release: versionDiscovery.lifecycle deprecates ${deprecated}."
+  body="$(fold -s -w 98 <<< "${body}" | sed 's/ *$//')"
+  GIT_AUTHOR_NAME="${LANG_BOT_NAME:?}" GIT_AUTHOR_EMAIL="${LANG_BOT_EMAIL:?}" GIT_COMMITTER_NAME="$LANG_BOT_NAME" GIT_COMMITTER_EMAIL="$LANG_BOT_EMAIL" \
+    git commit -q -a -F - <<EOF
+${subject}
+
+${body}
+
+${LANG_TRAILER}: ${runtime} ${full}
+EOF
+  # a fast-forward of main, never forced; a main that moved meanwhile is left as it is
+  rc=0
+  git push -q origin HEAD:refs/heads/main || rc=$?
+  if [ "$rc" != 0 ]; then
+    echo "**${runtime} ${full} passed, but main moved while the bot committed it.** Nothing was pushed: the next run tests it again (${run_url})." > "$comment"
+    printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
+    mv "$actions.tmp" "$actions"
+    return 0
+  fi
+  sha="$(git rev-parse HEAD)"
+  pins="$(cat "$dir/pins/${runtime}" 2>/dev/null || echo "not checked")"
+  publish="${images// /,}"
+  note=""
+  [ "$kind" != ml ] || note=" (the -gpu image with the next heavy-images run)"
+  {
+    echo "**Passed: ${runtime} ${full}** is on main as ${sha}; the publish workflow publishes ${images// /, } now${note}."
+    echo ""
+    echo "$lines"
+    echo "- RunR: ${pins}"
+    [ -z "$again" ] || echo "- made again on main after this run's landings before it: the same lines as the tested change"
+    [ -z "$deprecated" ] || echo "- ${runtime} supports only its newest release: \`runtimes/${runtime}/runtime.yaml\` deprecates ${deprecated} (RunR reads it from the runtime catalog)"
+    echo ""
+    echo "Run: ${run_url}."
+  } > "$comment"
+  printf 'label\t%s\t%s\ncomment\t%s\t%s\nclose\t%s\npublish\t%s\n' "$issue" "$PASSED_LABEL" "$issue" "$comment" "$issue" "$publish" >> "$actions.tmp"
+  mv "$actions.tmp" "$actions"
 }
 
 command="${1:-}"
@@ -731,5 +880,6 @@ case "$command" in
   upstream) cmd_upstream "$@" ;;
   runr-pins) cmd_runr_pins "$@" ;;
   land) cmd_land "$@" ;;
+  land-one) cmd_land_one "$@" ;;
   *) sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

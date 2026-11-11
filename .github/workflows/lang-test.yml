@@ -23,10 +23,12 @@
 # started for the images, the issue closed with "lang: passed". Red: "needs attention" and a
 # comment with what failed (the end of the job's log); nothing committed, nothing published
 # (LANG_GATE, lib/patch.sh). An upstream server's 5xx is not the release's fault: downloads retry
-# (ci/fetch.sh, the Dockerfiles' download), a RunR suite that hit one runs once more, and a test
-# that failed on one alone is labelled "lang: upstream outage" and tested again by the next run
-# (a second outage in a row: "needs attention"). RunR is its public last release: nothing of RunR's
-# private repository is read or written.
+# (ci/fetch.sh, the Dockerfiles' download), a RunR suite that hit one (or whose failed cases all
+# hit the registry inside its Kind cluster) runs once more, and a test that failed on one alone is
+# labelled "lang: upstream outage" and tested again by the next run (a second outage in a row:
+# "needs attention"). Several green tests land one after the other on the moving main
+# (ci/lang-bot.sh land), each commit with the trailer "RunR-Lang-Bot: <name> <version>". RunR is
+# its public last release: nothing of RunR's private repository is read or written.
 name: Language tests
 
 on:
@@ -49,8 +51,10 @@ concurrency:
 env:
   CANDIDATES: ghcr.io/brf-tech/runr/candidates
   RUNR_REPOSITORY: BRF-Tech/runr
-  LANG_BOT_NAME: RunR deps bot
-  LANG_BOT_EMAIL: deps-bot@runr.sh
+  # the bot's commits on main: Burak's identity, marked as the bot's by their trailer
+  # (RunR-Lang-Bot: <name> <version>, ci/lang-bot.sh land), as in BRF-Tech/runr (RunR-Deps-Bot)
+  LANG_BOT_NAME: Burak Faruk ŞAHİN
+  LANG_BOT_EMAIL: 19393636+brkfun@users.noreply.github.com
 
 jobs:
   plan:
@@ -106,7 +110,7 @@ jobs:
           gh label create "lang: passed" --repo "$GITHUB_REPOSITORY" --color 0e8a16 \
             --description "The language bot tested it and it is on main" 2>/dev/null || true
           gh label create "lang: upstream outage" --repo "$GITHUB_REPOSITORY" --color fbca04 \
-            --description "An upstream server's 5xx stopped the test: the next run tests it again" 2>/dev/null || true
+            --description "An upstream server's 5xx or the e2e cluster's registry stopped the test: the next run tests it again" 2>/dev/null || true
           jq -c '.superseded[]' "$RUNNER_TEMP/plan.json" | while read -r s; do
             gh issue close "$(jq -r .issue <<< "$s")" --repo "$GITHUB_REPOSITORY" --reason "not planned" \
               --comment "Superseded by #$(jq -r .by <<< "$s") ($(jq -r .version <<< "$s")): the language bot tests the newest release only ([run](${RUN_URL}))."
@@ -397,8 +401,9 @@ jobs:
       # the suite: the main e2e for a language (its xaas and faas cases) or an ML runtime (its ML
       # case), test-wasm / test-images for the WebAssembly images; the sandbox cases are left out
       # of the main e2e: they run RunR's sandbox image, not the candidate. A suite that failed on an
-      # upstream server's 5xx (a chart, an image or a package RunR's e2e downloads: lang-bot.sh
-      # upstream) runs once more, with a log of its own.
+      # outage (lang-bot.sh upstream: an upstream server's 5xx for a chart, an image or a package
+      # RunR's e2e downloads, or the registry inside its Kind cluster for every failed case) runs
+      # once more, with a log of its own.
       - name: RunR's e2e (runtime/ci.sh ${{ matrix.suite }})
         if: steps.candidate.outputs.skip != 'true'
         working-directory: runr
