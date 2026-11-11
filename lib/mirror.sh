@@ -81,7 +81,7 @@ REQS_IMAGES=(
   "tinygo:0.42.0|tinygo/tinygo:0.42.0"
   "node:22-bookworm-slim|node:22-bookworm-slim"
   "python:3.13-slim-bookworm|python:3.13-slim-bookworm"
-  "rust:1.98.1-slim-bookworm|rust:1.98.1-slim-bookworm"
+  "rust:1.99.1-slim-bookworm|rust:1.99.1-slim-bookworm"
   "rust:1.95.0-slim-bookworm|rust:1.95.0-slim-bookworm@sha256:d7482085ff5b415f84dba5647ae71606650bdef00db7aeb69f4b3d170c3e4082"
 
   # ── CUDA base of hf-serve's GPU image (the pytorch / tensorflow GPU runtimes take NVIDIA's pip wheels) ──

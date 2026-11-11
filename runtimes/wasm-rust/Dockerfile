@@ -5,7 +5,7 @@
 # (WasmBuildService); it is never deployed as a function.
 #
 #   docker build -t ghcr.io/brf-tech/runr/exec-wasm-rust:4.1 runtimes/wasm-rust     (or: ci.sh wasm)
-ARG RUST_VERSION=1.98.1
+ARG RUST_VERSION=1.99.1
 FROM ghcr.io/brf-tech/runr/reqs/rust:${RUST_VERSION}-slim-bookworm
 
 # The RUN steps only, not the image: a docker-container BuildKit builder gives them
