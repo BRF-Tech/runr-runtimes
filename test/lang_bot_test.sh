@@ -28,7 +28,8 @@
 #     step's curl) or the e2e cluster's registry for every failed case of RunR's summary, never the
 #     candidate's own answer, another local address or a case that failed on its own;
 #   - landing: a green version, ML pin or toolchain is committed on top of main and pushed as a
-#     fast-forward with the bot's identity and trailer (a tool's pin too, a new Bun minor with the
+#     fast-forward with the bot's identity and trailer, and one publish after the last landing
+#     takes every image the landed tests touched (a tool's pin too, a new Bun minor with the
 #     lifecycle of the one before), a suite RunR's release does not have yet counts as skipped, a
 #     red one or one without a result is labelled with what failed (never an empty log), one an
 #     outage stopped is labelled for the next run (a second outage in a row asks a person), a
@@ -475,19 +476,22 @@ git --git-dir="$origin" show main:runtimes/java/Dockerfile | grep -qxF "ARG MAVE
   && git --git-dir="$origin" show main:runtimes/java/Dockerfile | grep -qxF "ARG MAVEN_SHA512=$(sha512 "maven ${maven_new}")" || fail "main's maven"
 [ "$(git --git-dir="$origin" for-each-ref --format='%(refname)')" = refs/heads/main ] || fail "other refs pushed"
 actions="$(cat "$dir/actions")"
-grep -qF "$(printf 'label\t31\tlang: passed')" <<<"$actions" && grep -qF "$(printf 'publish\tpython')" <<<"$actions" || fail "green: ${actions}"
+grep -qF "$(printf 'label\t31\tlang: passed')" <<<"$actions" || fail "green: ${actions}"
+# one publish, the last action, for main as the run left it: every image the landed tests touched,
+# once, in the order they landed (python, pytorch, tinygo's wasm-exec and wasm-go, bun, maven's java)
+[ "$(grep -c "$(printf '^publish\t')" <<<"$actions")" = 1 ] && [ "$(tail -n 1 <<<"$actions")" = "$(printf 'publish\tpython,pytorch,wasm-exec,wasm-go,bun,java')" ] \
+  || fail "one publish of the landed images: ${actions}"
 grep -qF "$(printf 'label\t30\tneeds attention')" <<<"$actions" || fail "red: ${actions}"
 grep -qF 'the end of the python-3.13-e2e-test log' "$dir/comments/30.md" || fail "red: the log: $(cat "$dir/comments/30.md")"
 grep -qF 'nothing to move' "$dir/comments/31.md" || fail "green: RunR's pins: $(cat "$dir/comments/31.md")"
 grep -qF "$(printf 'label\t43\tneeds attention')" <<<"$actions" && grep -qF 'test` on the candidate: no result' "$dir/comments/43.md" || fail "no e2e result: ${actions} $(cat "$dir/comments/43.md" 2>/dev/null)"
-grep -qF "$(printf 'publish\tpytorch')" <<<"$actions" || fail "ml: no publish"
 grep -qF 'test-ml` on the candidate: skipped (RunR v0.6.7 has no ML case yet' "$dir/comments/33.md" || fail "ml: the skipped suite: $(cat "$dir/comments/33.md")"
-grep -qF "$(printf 'label\t34\tlang: passed')" <<<"$actions" && grep -qF "$(printf 'publish\twasm-exec,wasm-go')" <<<"$actions" || fail "wasm: ${actions}"
+grep -qF "$(printf 'label\t34\tlang: passed')" <<<"$actions" || fail "wasm: ${actions}"
 grep -qF 'test-images` on the candidate: success' "$dir/comments/34.md" && grep -qF 'WASM_RUNTIME_VERSION' "$dir/comments/34.md" || fail "wasm: the comment: $(cat "$dir/comments/34.md")"
-grep -qF "$(printf 'label\t47\tlang: passed')" <<<"$actions" && grep -qF "$(printf 'publish\tbun')" <<<"$actions" || fail "bun: ${actions}"
+grep -qF "$(printf 'label\t47\tlang: passed')" <<<"$actions" || fail "bun: ${actions}"
 grep -qF 'test` on the candidate: skipped (RunR v0.6.7 has no bun runtime yet' "$dir/comments/47.md" && grep -qF 'deprecates 1.4: deprecated 2026-11-07, sunset 2027-02-06' "$dir/comments/47.md" \
   || fail "bun: the comment: $(cat "$dir/comments/47.md")"
-grep -qF "$(printf 'label\t45\tlang: passed')" <<<"$actions" && grep -qF "$(printf 'publish\tjava')" <<<"$actions" || fail "maven: ${actions}"
+grep -qF "$(printf 'label\t45\tlang: passed')" <<<"$actions" || fail "maven: ${actions}"
 # maven passed on its second chance: the outage label goes
 grep -qF "$(printf 'unlabel\t45\tlang: upstream outage')" <<<"$actions" || fail "the outage label stayed on a green one: ${actions}"
 # zig: an outage, nobody is asked; the next run tests it again
@@ -516,6 +520,7 @@ before="$(git --git-dir="$origin" rev-parse main)"
 (cd "$work" && LANG_BOT_NAME=b LANG_BOT_EMAIL=b@example.test bash ci/lang-bot.sh land "$dir" https://example.test/run/10) > "$tmp/out" 2>&1 || fail "land: $(cat "$tmp/out")"
 [ "$(git --git-dir="$origin" rev-parse main)" = "$before" ] || fail "committed on a main whose runtime changed"
 grep -qF 'main changed `runtimes/python/`' "$dir/comments/40.md" || fail "the comment: $(cat "$dir/comments/40.md")"
+grep -q "$(printf '^publish\t')" "$dir/actions" && fail "a publish with nothing landed: $(cat "$dir/actions")"
 echo "ok - a version whose runtime changed on main since the tested commit is left for the next run"
 
 # --- several green toolchains of one run, all on one base (run 43020609005) -----------------------
@@ -588,7 +593,10 @@ grep -qF 'made again on main' "$cdir/comments/62.md" && git --git-dir="$corigin"
   || fail "tinygo was not made again after rust's mirror line: $(cat "$cdir/comments/62.md")"
 [ "$(git --git-dir="$corigin" log -5 --format='%an <%ae>|%(trailers:key=RunR-Lang-Bot,valueonly,separator=%x2C)' main | grep -c "^${bot_id}|[a-z-]* [0-9.]*$")" = 5 ] \
   || fail "the five commits' identity and trailer: $(git --git-dir="$corigin" log -5 --format='%an <%ae>|%B' main)"
-echo "ok - five green toolchains of one base land one after the other, those whose lines moved made again on the new main: main holds the five bumps"
+# one publish for the five (run 43047649717 dispatched five of the same commit): their images once
+[ "$(grep -c "$(printf '^publish\t')" <<<"$actions")" = 1 ] && [ "$(tail -n 1 <<<"$actions")" = "$(printf 'publish\twasm-rust,wasm-exec,wasm-go,wasm-js,wasm-python')" ] \
+  || fail "one publish of the five: ${actions}"
+echo "ok - five green toolchains of one base land one after the other, those whose lines moved made again on the new main: main holds the five bumps, published once"
 
 # made again, zig's checksums are other ones (its index changed since the build): not committed, the
 # next run tests it; a test the bot cannot land (its result has no tested commit) is reported and the
@@ -609,5 +617,8 @@ grep -qF 'is not the change the bot tested' "$cdir/comments/64.md" && grep -qF "
 grep -qF "$(printf 'label\t65\tneeds attention')" <<<"$actions" && grep -qF 'the bot could not land spin-sdk 9.9.9' "$cdir/comments/65.md" \
   || fail "the broken one: ${actions} $(cat "$cdir/comments/65.md" 2>/dev/null)"
 for i in 60 61 62 63; do grep -qF "$(printf 'label\t%s\tlang: passed' "$i")" <<<"$actions" || fail "#${i} after the broken one: ${actions}"; done
+# the one publish: the images of the four that landed (zig's wasm-exec through tinygo's and spin's)
+[ "$(grep -c "$(printf '^publish\t')" <<<"$actions")" = 1 ] && [ "$(tail -n 1 <<<"$actions")" = "$(printf 'publish\twasm-rust,wasm-exec,wasm-go,wasm-js,wasm-python')" ] \
+  || fail "one publish of the four: ${actions}"
 [ -z "$(git -C "$cwork" status --porcelain)" ] || fail "the checkout is left dirty: $(git -C "$cwork" status --porcelain)"
 echo "ok - a bump made again with other lines waits for the next run; a test the bot cannot land is reported, the others still land"

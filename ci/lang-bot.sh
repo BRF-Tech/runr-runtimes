@@ -83,7 +83,8 @@
 #       it again; a second outage in a row is "needs attention". Each test lands in a process of
 #       its own: one that fails is reported ("needs attention", with its log) and the others still
 #       land. DIR/actions: what the issues get, one action per line (comment ISSUE FILE, label
-#       ISSUE LABEL, unlabel ISSUE LABEL, close ISSUE, publish IMAGES)
+#       ISSUE LABEL, unlabel ISSUE LABEL, close ISSUE), and at the end one publish IMAGES for the
+#       main the run left: every image a landed test touched, once
 #
 # Needs bash, jq, curl (ml-bump, wasm-bump, tool-bump), sha256sum, sha512sum and GNU sed, sort and
 # date.
@@ -593,6 +594,7 @@ cmd_land() {
   local dir="${1:?usage: lang-bot.sh land DIR RUN_URL}" run_url="${2:?}" n i test issue runtime full rc log
   mkdir -p "$dir/comments" "$dir/actions.d" "$dir/bot"
   : > "$dir/actions"
+  : > "$dir/publish.list"
   # the bot as it started: the checkout moves along main while it lands
   cp "${BASH_SOURCE[0]}" "$dir/bot/lang-bot.sh"
   export LANG_BOT_ROOT="$ROOT" LANG_BOT_SELF="$dir/bot/lang-bot.sh"
@@ -606,7 +608,9 @@ cmd_land() {
     bash "$LANG_BOT_SELF" land-one "$dir" "$i" "$run_url" > "$log" 2>&1 || rc=$?
     cat "$log"
     if [ "$rc" = 0 ] && [ -f "$dir/actions.d/${i}" ]; then
-      cat "$dir/actions.d/${i}" >> "$dir/actions"
+      # its issue's actions now; its images join the one publish after the loop
+      grep -v $'^publish\t' "$dir/actions.d/${i}" >> "$dir/actions" || true
+      sed -n $'s/^publish\t//p' "$dir/actions.d/${i}" | tr ',' '\n' >> "$dir/publish.list"
       continue
     fi
     # it failed in the middle: the issue hears of it, the checkout is clean for the next one
@@ -623,6 +627,11 @@ cmd_land() {
     } > "$dir/comments/${issue}.md"
     printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$ATTENTION_LABEL" "$issue" "$dir/comments/${issue}.md" >> "$dir/actions"
   done
+  # one publish for main as the run left it, with every image a landed test touched (the publish
+  # workflow's concurrency would cancel or queue one dispatch per test of the same commit)
+  local images
+  images="$(awk 'NF && !seen[$0]++' "$dir/publish.list" 2>/dev/null | paste -sd , -)"
+  [ -z "$images" ] || printf 'publish\t%s\n' "$images" >> "$dir/actions"
 }
 
 # land-one DIR INDEX RUN_URL — the landing of one test of DIR/tests.json (cmd_land runs it), its

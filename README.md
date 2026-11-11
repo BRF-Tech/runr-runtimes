@@ -277,8 +277,9 @@ release and closes the older ones as superseded.
   marked as the bot's by its trailer `RunR-Lang-Bot: <name> <version>` (as BRF-Tech/runr's
   `RunR-Deps-Bot`). A language version goes into `runtimes/<runtime>/tested-versions` (a new Bun
   minor with the lifecycle of the ones below it); a tool's, an ML framework's or a toolchain's
-  commit is its pin. The bot starts the publish workflow for those images (a push of the
-  workflow's token starts no workflow), and closes the issue with the label `lang: passed`. The
+  commit is its pin. After the last landing the bot starts the publish workflow once, for `main`
+  as the run left it, with every image the landed tests touched (a push of the workflow's token
+  starts no workflow), and closes each issue with the label `lang: passed`. The
   comment also says what RunR's last release pins of that runtime. The language runtimes pin
   nothing there (RunR finds their versions in the registry), so nothing moves in RunR.
 - **Several green tests of one run** land one after the other on the moving `main`
