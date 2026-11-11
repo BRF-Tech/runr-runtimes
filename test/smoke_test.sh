@@ -33,7 +33,10 @@ sum=42
 status=200
 schedule_trigger=schedule
 wrapper_prints=1.1.0
-spin_prints="spin 4.1.0 (8d2c1a3 2026-05-04)"
+# the Spin CLI a WebAssembly image's Dockerfile pins, as `spin --version` prints it (whichever the
+# pin is: the language bot moves it)
+spin_of() { echo "spin $(sed -n 's/^ARG SPIN_VERSION=//p' "$here/runtimes/wasm-$1/Dockerfile") (8d2c1a3 2026-05-04)"; }
+spin_prints="$(spin_of rust)"
 upload_ok=1
 hf_prints=1.1.1
 hf_cuda=null
@@ -142,12 +145,13 @@ echo "ok - wrapper_smoke: the binary prints the tag's version"
 
 # --- WebAssembly -----------------------------------------------------------------------------------
 for lang in rust go js python exec; do
+  spin_prints="$(spin_of "$lang")"
   wasm_smoke "registry.test/exec-wasm-${lang}:4.1" "$lang" "$here/runtimes/wasm-${lang}" > "$tmp/out" 2>&1 \
     || { cat "$tmp/out"; fail "wasm-${lang}: a working image failed"; }
 done
-spin_prints="spin 3.9.0 (abc 2025-01-01)"
+spin_prints="spin 0.0.1 (abc 2025-01-01)"
 wasm_smoke registry.test/exec-wasm-rust:4.1 rust "$here/runtimes/wasm-rust" > "$tmp/out" 2>&1 && fail "wasm: another Spin CLI passed"
-spin_prints="spin 4.1.0 (8d2c1a3 2026-05-04)" upload_ok=0
+spin_prints="$(spin_of exec)" upload_ok=0
 wasm_smoke registry.test/exec-wasm-exec:4.1 exec "$here/runtimes/wasm-exec" > "$tmp/out" 2>&1 && fail "wasm-exec without runr-image-upload passed"
 wasm_smoke registry.test/exec-wasm-go:4.1 go "$here/runtimes/wasm-go" > "$tmp/out" 2>&1 || fail "wasm-go needs no runr-image-upload"
 upload_ok=1
