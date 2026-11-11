@@ -12,6 +12,8 @@ versionDiscovery:
   repository: ghcr.io/brf-tech/runr/exec-go
   image: "ghcr.io/brf-tech/runr/exec-go:{version}"
   eol: go
+  lifecycle:
+    "1.25": {eol: "2026-08-19"}
 handler:
   file: main
   function: handler
