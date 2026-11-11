@@ -42,7 +42,8 @@
 WATCH_EOL_DAYS="${WATCH_EOL_DAYS:-60}"
 WATCH_HUB="https://hub.docker.com/v2/repositories"
 
-# watch_get URL — the body of URL (or its fixture). Status 3: HTTP 404, 1: any other failure
+# watch_get URL — the body of URL (or its fixture). Status 3: HTTP 404, 1: any other failure (after
+# curl's retries of a timeout and of an HTTP 408, 429 or 5xx answer)
 watch_get() {
   local url="$1"
   if [ -n "${WATCH_FIXTURES:-}" ]; then
@@ -59,7 +60,8 @@ watch_get() {
     auth=(-H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json')
   fi
   body="$(mktemp)"
-  status="$(curl -sSL ${auth[@]+"${auth[@]}"} -o "$body" -w '%{http_code}' "$url" 2>/dev/null)" || status="${status:-000}"
+  status="$(curl -sSL --retry 3 --retry-delay 5 --connect-timeout 30 ${auth[@]+"${auth[@]}"} -o "$body" -w '%{http_code}' "$url" 2>/dev/null)" || status="${status:-000}"
+  status="${status: -3}"
   case "$status" in
     200) cat "$body"; rm -f -- "$body"; return 0 ;;
     404) rm -f -- "$body"; return 3 ;;
@@ -67,15 +69,22 @@ watch_get() {
   esac
 }
 
-# watch_digest ALGORITHM URL — the sha256 or sha512 of a download (or of its fixture)
+# watch_digest ALGORITHM URL — the sha256 or sha512 of a download (or of its fixture), downloaded
+# with fetch_download (lib/fetch.sh: retries, a GitHub release asset through the API)
 watch_digest() {
-  local sum
+  local sum file
   if [ -n "${WATCH_FIXTURES:-}" ]; then
-    local file="${WATCH_FIXTURES}/${2//[^A-Za-z0-9._-]/_}"
+    file="${WATCH_FIXTURES}/${2//[^A-Za-z0-9._-]/_}"
     [ -f "$file" ] || return 1
     sum="$("${1}sum" "$file")"
   else
-    sum="$(curl -fsSL "$2" | "${1}sum")" || return 1
+    file="$(mktemp)"
+    if ! fetch_download "$2" "$file"; then
+      rm -f -- "$file"
+      return 1
+    fi
+    sum="$("${1}sum" "$file")"
+    rm -f -- "$file"
   fi
   echo "${sum%% *}"
 }

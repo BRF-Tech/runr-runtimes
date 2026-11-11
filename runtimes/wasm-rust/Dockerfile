@@ -18,6 +18,9 @@ ARG SPIN_SHA256_AMD64=02fdfe34a52f8bb41da5ac0a7b52abfbf0534cd57710c3a30d13293f42
 ARG SPIN_SHA256_ARM64=dc19096a4da6038142dc5088f16ec04a18ff8eab08e3afbd587568b578195094
 ARG TARGETARCH
 
+# download OUT URL: curl retries every error 5 times, 10 s apart; a GitHub release asset that still
+# fails comes through the GitHub API's asset endpoint, which answers when releases/download gives
+# 504 (test/fetch_test.sh runs this function)
 RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl; \
@@ -27,7 +30,17 @@ RUN set -eu; \
       arm64) arch=aarch64; sum="$SPIN_SHA256_ARM64" ;; \
       *) echo "unsupported architecture ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/spin.tar.gz "https://github.com/spinframework/spin/releases/download/v${SPIN_VERSION}/spin-v${SPIN_VERSION}-static-linux-${arch}.tar.gz"; \
+    download() { \
+      code="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 -w '%{http_code}' -o "$1" "$2" 2>/dev/null)" && return 0; \
+      case "$2" in https://github.com/*/releases/download/*) \
+        p="${2#https://github.com/}"; t="${p#*/releases/download/}"; \
+        echo "${2}: no answer after its retries, the release asset through the GitHub API instead" >&2; \
+        a="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 "https://api.github.com/repos/${p%%/releases/download/*}/releases/tags/${t%/*}" 2>/dev/null | tr -d ' \n\r' | grep -oE "\"url\":\"[^\"]+/releases/assets/[0-9]+\",\"id\":[0-9]+,\"node_id\":\"[^\"]+\",\"name\":\"${t##*/}\"" | cut -d'"' -f4)"; \
+        [ -n "$a" ] && curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 -H 'Accept: application/octet-stream' -o "$1" "$a" 2>/dev/null && return 0 ;; \
+      esac; \
+      echo "download failed: ${2} (HTTP ${code:-000})" >&2; return 1; \
+    }; \
+    download /tmp/spin.tar.gz "https://github.com/spinframework/spin/releases/download/v${SPIN_VERSION}/spin-v${SPIN_VERSION}-static-linux-${arch}.tar.gz"; \
     echo "${sum}  /tmp/spin.tar.gz" | sha256sum -c -; \
     mkdir -p /tmp/spin; \
     tar -xzf /tmp/spin.tar.gz -C /tmp/spin; \

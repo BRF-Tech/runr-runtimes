@@ -21,8 +21,12 @@
 # under its published name (RUNTIME_IMAGES_LOCAL=1).
 # Green: committed on main as a fast-forward (tested-versions, or the pin), the publish workflow
 # started for the images, the issue closed with "lang: passed". Red: "needs attention" and a
-# comment with what failed; nothing committed, nothing published (LANG_GATE, lib/patch.sh). RunR is
-# its public last release: nothing of RunR's private repository is read or written.
+# comment with what failed (the end of the job's log); nothing committed, nothing published
+# (LANG_GATE, lib/patch.sh). An upstream server's 5xx is not the release's fault: downloads retry
+# (ci/fetch.sh, the Dockerfiles' download), a RunR suite that hit one runs once more, and a test
+# that failed on one alone is labelled "lang: upstream outage" and tested again by the next run
+# (a second outage in a row: "needs attention"). RunR is its public last release: nothing of RunR's
+# private repository is read or written.
 name: Language tests
 
 on:
@@ -101,6 +105,8 @@ jobs:
             --description "The language bot holds it: a person decides" 2>/dev/null || true
           gh label create "lang: passed" --repo "$GITHUB_REPOSITORY" --color 0e8a16 \
             --description "The language bot tested it and it is on main" 2>/dev/null || true
+          gh label create "lang: upstream outage" --repo "$GITHUB_REPOSITORY" --color fbca04 \
+            --description "An upstream server's 5xx stopped the test: the next run tests it again" 2>/dev/null || true
           jq -c '.superseded[]' "$RUNNER_TEMP/plan.json" | while read -r s; do
             gh issue close "$(jq -r .issue <<< "$s")" --repo "$GITHUB_REPOSITORY" --reason "not planned" \
               --comment "Superseded by #$(jq -r .by <<< "$s") ($(jq -r .version <<< "$s")): the language bot tests the newest release only ([run](${RUN_URL}))."
@@ -150,28 +156,31 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # every step from here prints into build.log too (exec … tee): a red comment shows the end of
+      # it, the lines of the step that failed
       - name: Install crane (pinned, checksum verified)
         run: |
-          curl -fsSL -o /tmp/crane.tar.gz "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
-          echo "${CRANE_SHA256}  /tmp/crane.tar.gz" | sha256sum -c -
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
+          bash ci/fetch.sh "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" /tmp/crane.tar.gz "${CRANE_SHA256}"
           sudo tar -xzf /tmp/crane.tar.gz -C /usr/local/bin crane
       # a language version: its base image mirrored (as publish.yml's bases job does), the image
       # built and smoke-tested, pushed as the candidate RunR's e2e deploys
       - name: Build, smoke test and push the candidate (language)
         if: matrix.kind == 'language'
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/result"
-          ./ci.sh mirror-bases 2>&1 | tail -n 20 | tee -a "$RUNNER_TEMP/build.log"
-          BUILD_REPORT="$RUNNER_TEMP/built" ./ci.sh build "$RUNTIME" --version="$VERSION" 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          ./ci.sh mirror-bases 2>&1 | tail -n 20
+          BUILD_REPORT="$RUNNER_TEMP/built" ./ci.sh build "$RUNTIME" --version="$VERSION"
           built="$(awk -v r="$RUNTIME" -v v="$VERSION" '$1 == r && $2 == v { print $3 }' "$RUNNER_TEMP/built")"
           if [ "$built" != "$FULL" ]; then
-            echo "the image runs ${RUNTIME} ${built:-nothing}, not ${FULL}: the base image of the reqs mirror is another release" | tee -a "$RUNNER_TEMP/build.log"
+            echo "the image runs ${RUNTIME} ${built:-nothing}, not ${FULL}: the base image of the reqs mirror is another release"
             exit 1
           fi
           image="${CANDIDATES}/exec-${RUNTIME}:${FULL}"
           docker tag "ghcr.io/brf-tech/runr/exec-${RUNTIME}:${VERSION}" "$image"
-          docker push -q "$image" | tee -a "$RUNNER_TEMP/build.log"
+          docker push -q "$image"
           echo "$image" > "$RUNNER_TEMP/result/image"
           echo "$RUNTIME" > "$RUNNER_TEMP/result/images"
           # the versions published now: a version without a tag is a new one
@@ -181,21 +190,22 @@ jobs:
       - name: Move the tool, build, smoke test and push the candidate (a tool of a language image)
         if: matrix.kind == 'tool'
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/result"
           bash ci/lang-bot.sh tool-bump "$RUNTIME" "$FULL" > "$RUNNER_TEMP/bump.json"
           jq -r .pin "$RUNNER_TEMP/bump.json" | tee "$RUNNER_TEMP/result/pin"
           git diff > "$RUNNER_TEMP/result/pin.patch"
           image="$(jq -r .image "$RUNNER_TEMP/bump.json")"
-          ./ci.sh mirror-bases 2>&1 | tail -n 20 | tee -a "$RUNNER_TEMP/build.log"
-          BUILD_REPORT="$RUNNER_TEMP/built" ./ci.sh build "$image" 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          ./ci.sh mirror-bases 2>&1 | tail -n 20
+          BUILD_REPORT="$RUNNER_TEMP/built" ./ci.sh build "$image"
           newest="$(awk -v r="$image" '$1 == r { print $2, $3 }' "$RUNNER_TEMP/built" | sort -V | tail -n 1)"
           version="${newest%% *}"
           built="${newest#* }"
-          [ -n "$version" ] && [ -n "$built" ] || { echo "no version of ${image} was built" | tee -a "$RUNNER_TEMP/build.log"; exit 1; }
+          [ -n "$version" ] && [ -n "$built" ] || { echo "no version of ${image} was built"; exit 1; }
           candidate="${CANDIDATES}/exec-${image}:${built}-${RUNTIME}-${FULL}"
           docker tag "ghcr.io/brf-tech/runr/exec-${image}:${version}" "$candidate"
-          docker push -q "$candidate" | tee -a "$RUNNER_TEMP/build.log"
+          docker push -q "$candidate"
           echo "$candidate" > "$RUNNER_TEMP/result/image"
           echo "$image" > "$RUNNER_TEMP/result/images"
           echo "$image" > "$RUNNER_TEMP/result/runtime"
@@ -204,14 +214,15 @@ jobs:
       - name: Move the pin, build, smoke test and push the candidate (ML)
         if: matrix.kind == 'ml'
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/result"
           bash ci/lang-bot.sh ml-bump "$RUNTIME" "$FULL" | tee "$RUNNER_TEMP/result/pin"
           git diff > "$RUNNER_TEMP/result/pin.patch"
-          ./ci.sh ml-runtimes "$RUNTIME" cpu 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          ./ci.sh ml-runtimes "$RUNTIME" cpu
           image="${CANDIDATES}/exec-${RUNTIME}:${FULL}"
           docker tag "ghcr.io/brf-tech/runr/exec-${RUNTIME}:${VERSION}" "$image"
-          docker push -q "$image" | tee -a "$RUNNER_TEMP/build.log"
+          docker push -q "$image"
           echo "$image" > "$RUNNER_TEMP/result/image"
           echo "$RUNTIME" > "$RUNNER_TEMP/result/images"
       # a WebAssembly toolchain: the ARG and its checksums moved, a new base image mirrored first, the
@@ -219,31 +230,36 @@ jobs:
       - name: Move the toolchain, build, smoke test and push the candidates (WebAssembly)
         if: matrix.kind == 'wasm'
         run: |
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/result"
           bash ci/lang-bot.sh wasm-bump "$RUNTIME" "$FULL" > "$RUNNER_TEMP/bump.json"
           jq -r .pin "$RUNNER_TEMP/bump.json" | tee "$RUNNER_TEMP/result/pin"
           git diff > "$RUNNER_TEMP/result/pin.patch"
           for name in $(jq -r '.mirror[]' "$RUNNER_TEMP/bump.json"); do
-            ./ci.sh mirror-reqs "$name" 2>&1 | tail -n 10 | tee -a "$RUNNER_TEMP/build.log"
+            ./ci.sh mirror-reqs "$name" 2>&1 | tail -n 10
           done
           images="$(jq -r '.images | join(" ")' "$RUNNER_TEMP/bump.json")"
           echo "$images" > "$RUNNER_TEMP/result/images"
           read -ra names <<< "${images//wasm-/}"
-          ./ci.sh wasm "${names[@]}" 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          ./ci.sh wasm "${names[@]}"
           : > "$RUNNER_TEMP/result/candidates"
           for name in $images; do
             version="$(awk '/^[[:space:]]*-[[:space:]]*version:/ { v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); gsub(/["'"'"' ]/, "", v); print v; exit }' "runtimes/${name}/runtime.yaml")"
             candidate="${CANDIDATES}/exec-${name}:${version}-${RUNTIME}-${FULL}"
             docker tag "ghcr.io/brf-tech/runr/exec-${name}:${version}" "$candidate"
-            docker push -q "$candidate" | tee -a "$RUNNER_TEMP/build.log"
+            docker push -q "$candidate"
             echo "${candidate} ghcr.io/brf-tech/runr/exec-${name}:${version}" >> "$RUNNER_TEMP/result/candidates"
           done
       # this repository's tests, as ci.yml runs them, on the change
       - name: Shell tests, Dockerfile and reqs mirror checks
         run: |
-          set -o pipefail
-          { for t in test/*_test.sh; do echo "── $t"; bash "$t" || exit 1; done; bash ci/check-dockerfiles.sh; bash ci/check-reqs-mirror.sh; } 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
+          for t in test/*_test.sh; do echo "── $t"; bash "$t" || exit 1; done
+          bash ci/check-dockerfiles.sh
+          bash ci/check-reqs-mirror.sh
+      # the end of build.log, and the lines of an upstream outage (an HTTP 5xx of a server a
+      # download asked: lang-bot.sh upstream), which is not the release's fault
       - name: Result
         if: always()
         env:
@@ -253,6 +269,11 @@ jobs:
           echo "$JOB_STATUS" > "$RUNNER_TEMP/result/status"
           echo "$GITHUB_SHA" > "$RUNNER_TEMP/result/sha"
           tail -n 60 "$RUNNER_TEMP/build.log" > "$RUNNER_TEMP/result/tail.txt" 2>/dev/null || true
+          if [ "$JOB_STATUS" != success ] && bash ci/lang-bot.sh upstream "$RUNNER_TEMP/build.log" > "$RUNNER_TEMP/result/upstream"; then
+            echo "an upstream outage:"; cat "$RUNNER_TEMP/result/upstream"
+          else
+            rm -f "$RUNNER_TEMP/result/upstream"
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -311,9 +332,11 @@ jobs:
         env:
           RUNR_TAG: ${{ needs.plan.outputs.runr-tag }}
         run: |
+          # every step up to the suite prints into e2e.log too: a red comment shows its end
+          exec > >(tee -a "$RUNNER_TEMP/e2e.log") 2>&1
           mkdir -p "$RUNNER_TEMP/result"
           if [ "$(cat "$RUNNER_TEMP/build/status")" != success ]; then
-            echo "the build failed: no candidate to deploy" | tee "$RUNNER_TEMP/e2e.log"
+            echo "the build failed: no candidate to deploy"
             exit 1
           fi
           # the runtime and version the e2e deploys: a tool's are its image's newest version
@@ -362,40 +385,56 @@ jobs:
       - name: Install kind, kubectl, cloud-provider-kind and helm (pinned, checksums verified)
         if: steps.candidate.outputs.skip != 'true'
         run: |
-          curl -fsSL -o /tmp/kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
-          echo "${KIND_SHA256}  /tmp/kind" | sha256sum -c -
-          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-          echo "${KUBECTL_SHA256}  /tmp/kubectl" | sha256sum -c -
-          curl -fsSL -o /tmp/cpk.tar.gz "https://github.com/kubernetes-sigs/cloud-provider-kind/releases/download/${CLOUD_PROVIDER_KIND_VERSION}/cloud-provider-kind_${CLOUD_PROVIDER_KIND_VERSION#v}_linux_amd64.tar.gz"
-          echo "${CLOUD_PROVIDER_KIND_SHA256}  /tmp/cpk.tar.gz" | sha256sum -c -
-          curl -fsSL -o /tmp/helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          echo "${HELM_SHA256}  /tmp/helm.tar.gz" | sha256sum -c -
+          exec > >(tee -a "$RUNNER_TEMP/e2e.log") 2>&1
+          bash runtimes-repo/ci/fetch.sh "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64" /tmp/kind "${KIND_SHA256}"
+          bash runtimes-repo/ci/fetch.sh "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" /tmp/kubectl "${KUBECTL_SHA256}"
+          bash runtimes-repo/ci/fetch.sh "https://github.com/kubernetes-sigs/cloud-provider-kind/releases/download/${CLOUD_PROVIDER_KIND_VERSION}/cloud-provider-kind_${CLOUD_PROVIDER_KIND_VERSION#v}_linux_amd64.tar.gz" /tmp/cpk.tar.gz "${CLOUD_PROVIDER_KIND_SHA256}"
+          bash runtimes-repo/ci/fetch.sh "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" /tmp/helm.tar.gz "${HELM_SHA256}"
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
           sudo tar -xzf /tmp/cpk.tar.gz -C /usr/local/bin cloud-provider-kind
           sudo tar -xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm
       # the suite: the main e2e for a language (its xaas and faas cases) or an ML runtime (its ML
       # case), test-wasm / test-images for the WebAssembly images; the sandbox cases are left out
-      # of the main e2e: they run RunR's sandbox image, not the candidate
+      # of the main e2e: they run RunR's sandbox image, not the candidate. A suite that failed on an
+      # upstream server's 5xx (a chart, an image or a package RunR's e2e downloads: lang-bot.sh
+      # upstream) runs once more, with a log of its own.
       - name: RunR's e2e (runtime/ci.sh ${{ matrix.suite }})
         if: steps.candidate.outputs.skip != 'true'
         working-directory: runr
         run: |
           set -o pipefail
-          case "$SUITE" in
-            test) bash runtime/ci.sh test --skip-sandbox 2>&1 | tee -a "$RUNNER_TEMP/e2e.log" ;;
-            test-ml) TEST_E2E_EXTRA_ARGS=--ml bash runtime/ci.sh test --skip-sandbox 2>&1 | tee -a "$RUNNER_TEMP/e2e.log" ;;
-            test-wasm|test-images) bash runtime/ci.sh "$SUITE" 2>&1 | tee -a "$RUNNER_TEMP/e2e.log" ;;
-            *) echo "unknown suite ${SUITE}"; exit 1 ;;
-          esac
+          suite() {
+            case "$SUITE" in
+              test) bash runtime/ci.sh test --skip-sandbox ;;
+              test-ml) TEST_E2E_EXTRA_ARGS=--ml bash runtime/ci.sh test --skip-sandbox ;;
+              test-wasm|test-images) bash runtime/ci.sh "$SUITE" ;;
+              *) echo "unknown suite ${SUITE}"; return 1 ;;
+            esac
+          }
+          rc=0
+          suite 2>&1 | tee -a "$RUNNER_TEMP/e2e.log" || rc=$?
+          if [ "$rc" != 0 ] && outage="$(bash ../runtimes-repo/ci/lang-bot.sh upstream "$RUNNER_TEMP/e2e.log")"; then
+            echo "an upstream outage, RunR's ${SUITE} once more: ${outage%%$'\n'*}"
+            printf '%s\n' "$outage" > "$RUNNER_TEMP/result/retried"
+            mv "$RUNNER_TEMP/e2e.log" "$RUNNER_TEMP/e2e-first.log"
+            sudo rm -f api/storage/e2e-results-*.md || true
+            rc=0
+            suite 2>&1 | tee -a "$RUNNER_TEMP/e2e.log" || rc=$?
+          fi
+          [ "$rc" = 0 ] || exit "$rc"
           shopt -s nullglob
           for f in api/storage/e2e-results-*.md; do
             cat "$f" >> "$GITHUB_STEP_SUMMARY"
+            rc=0
             case "$BOT_KIND" in
-              language|tool) bash ../runtimes-repo/ci/lang-bot.sh check-e2e "$f" "$E2E_RUNTIME" "$E2E_VERSION" | tee -a "$RUNNER_TEMP/e2e.log" ;;
-              ml) bash ../runtimes-repo/ci/lang-bot.sh check-e2e "$f" "$RUNTIME" "$VERSION" --ml | tee -a "$RUNNER_TEMP/e2e.log" ;;
+              language|tool) bash ../runtimes-repo/ci/lang-bot.sh check-e2e "$f" "$E2E_RUNTIME" "$E2E_VERSION" 2>&1 | tee -a "$RUNNER_TEMP/e2e.log" || rc=$? ;;
+              ml) bash ../runtimes-repo/ci/lang-bot.sh check-e2e "$f" "$RUNTIME" "$VERSION" --ml 2>&1 | tee -a "$RUNNER_TEMP/e2e.log" || rc=$? ;;
             esac
+            # the candidate's own cases failed: whatever else the log shows, no outage
+            [ "$rc" = 0 ] || { touch "$RUNNER_TEMP/result/cases-failed"; exit "$rc"; }
           done
+      # the end of e2e.log (the last run of the suite), and the lines of an upstream outage
       - name: Result
         if: always() && steps.candidate.outputs.skip != 'true'
         env:
@@ -404,6 +443,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/result"
           echo "$JOB_STATUS" > "$RUNNER_TEMP/result/status"
           tail -n 60 "$RUNNER_TEMP/e2e.log" > "$RUNNER_TEMP/result/tail.txt" 2>/dev/null || true
+          if [ "$JOB_STATUS" != success ] && [ ! -f "$RUNNER_TEMP/result/cases-failed" ] \
+            && bash runtimes-repo/ci/lang-bot.sh upstream "$RUNNER_TEMP/e2e.log" > "$RUNNER_TEMP/result/upstream"; then
+            echo "an upstream outage:"; cat "$RUNNER_TEMP/result/upstream"
+          else
+            rm -f "$RUNNER_TEMP/result/upstream"
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -479,6 +524,7 @@ jobs:
             case "$action" in
               comment) gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body-file "$arg" ;;
               label) gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --add-label "$arg" ;;
+              unlabel) gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --remove-label "$arg" ;;
               close) gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason completed ;;
               publish) gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref main -f images="$issue" ;;
             esac

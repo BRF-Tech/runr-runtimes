@@ -16,6 +16,7 @@ source "${SCRIPT_DIR}/lib/eol.sh"
 source "${SCRIPT_DIR}/lib/patch.sh"
 source "${SCRIPT_DIR}/lib/feed.sh"
 source "${SCRIPT_DIR}/lib/catalog.sh"
+source "${SCRIPT_DIR}/lib/fetch.sh"
 source "${SCRIPT_DIR}/lib/watch.sh"
 
 # ── Help ──

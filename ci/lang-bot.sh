@@ -4,7 +4,7 @@
 #
 #   ci/lang-bot.sh plan ISSUES.json [--only=N,…]
 #       which issues of lang-releases.yml (`ci.sh watch`) this run tests: JSON {tests: [{issue,
-#       kind, runtime, version, full, key, suites}], superseded: [{issue, by}], retrigger: [issue],
+#       kind, runtime, version, full, key, suites, outage}], superseded: [{issue, by}], retrigger: [issue],
 #       skipped: [{issue, reason}], attention: []}. kind "language" (the runtimes of RUNTIME_DEFS
 #       in lib/common.sh: python, nodejs, go, php, java, dotnet, ruby, bun; version is the
 #       major.minor, full the release), "tool" (a tool a language image pins, LANG_TOOL_DEFS:
@@ -15,10 +15,14 @@
 #       language version, a tool, an ML runtime, a toolchain) the newest is tested, the older ones
 #       superseded. An end-of-life notice is for people (skipped), an issue labelled "lang: passed"
 #       is done, one labelled "needs attention" waits unless the run names it (--only), which takes
-#       the label off.
+#       the label off. One labelled "lang: upstream outage" is tested again (outage: true): the run
+#       before failed on an upstream server's 5xx alone.
 #   ci/lang-bot.sh ml-bump RUNTIME VERSION
 #       the framework pin of an ML runtime moved to VERSION in this checkout: torch with the
-#       torchvision release that requires it (PyPI), tensorflow-cpu with tensorflow[and-cuda]
+#       torchvision pip installs next to it, the newest release whose torch requirement admits it
+#       (PyPI: torch==X up to torchvision 0.29.0, a range like torch>=2.14.0 since 0.29.1), both
+#       built on the CUDA wheel index of the -gpu image (Dockerfile.gpu; exit 2 when one is not:
+#       another CUDA is a person's decision), tensorflow-cpu with tensorflow[and-cuda]
 #   ci/lang-bot.sh wasm-bump TOOL VERSION
 #       a toolchain of the WebAssembly images moved to VERSION in this checkout: its ARG in every
 #       Dockerfile that has it, the SHA256 of its downloads (Spin, wasi-sdk, wasm-tools: of the
@@ -46,6 +50,13 @@
 #   ci/lang-bot.sh check-e2e RESULTS.md RUNTIME VERSION [--ml]
 #       the e2e's results show the xaas cases of RUNTIME at VERSION (--ml: its ML case), and none
 #       of them failed
+#   ci/lang-bot.sh upstream LOG
+#       the lines (at most 5) of a test job's LOG that show an upstream server's outage: an HTTP
+#       500, 502, 503 or 504 of a public https URL on a line that says it failed (helm's "failed to
+#       fetch https://…: 504 Gateway Timeout", the "download failed: URL (HTTP 504)" of
+#       lib/fetch.sh and of the WebAssembly Dockerfiles), or curl's "(22) The requested URL
+#       returned error: 504" in an image build's RUN step. A local or private address is the
+#       candidate's, never an upstream. Exit 1: none
 #   ci/lang-bot.sh runr-pins RUNR RUNTIME
 #       what a checkout of RunR (its last release) pins of RUNTIME's versions: "discovered" (exit 0:
 #       RunR finds them in the registry, nothing to move), or the pins (exit 2: a person moves them);
@@ -57,8 +68,12 @@
 #       tested commit (a new version of a runtime that supports only its newest release also
 #       deprecates the published ones below it: lifecycle), and pushed as
 #       `git push origin HEAD:refs/heads/main`, a fast-forward (the
-#       bot's identity LANG_BOT_NAME, LANG_BOT_EMAIL). DIR/actions: what the issues get, one action
-#       per line (comment ISSUE FILE, label ISSUE LABEL, close ISSUE, publish IMAGES)
+#       bot's identity LANG_BOT_NAME, LANG_BOT_EMAIL). A red test is labelled "needs attention" with
+#       the end of the failed jobs' logs, unless each of its failures is an upstream outage (their
+#       result's upstream file): then it is labelled "lang: upstream outage" and the next run tests
+#       it again; a second outage in a row is "needs attention". DIR/actions: what the issues get,
+#       one action per line (comment ISSUE FILE, label ISSUE LABEL, unlabel ISSUE LABEL, close
+#       ISSUE, publish IMAGES)
 #
 # Needs bash, jq, curl (ml-bump, wasm-bump, tool-bump), sha256sum, sha512sum and GNU sed, sort and
 # date.
@@ -67,6 +82,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASSED_LABEL="${LANG_PASSED_LABEL:-lang: passed}"
 ATTENTION_LABEL="${LANG_ATTENTION_LABEL:-needs attention}"
+OUTAGE_LABEL="${LANG_OUTAGE_LABEL:-lang: upstream outage}"
 # the language runtimes: RUNTIME_DEFS of lib/common.sh, as ci.sh builds them
 SCRIPT_DIR="$ROOT"
 # shellcheck source=../lib/common.sh
@@ -98,6 +114,46 @@ TOOLCHAIN_DEFS=(
 )
 
 newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]; }
+# vcmp A B — -1, 0 or 1 as PEP 440 orders two releases (2.15 = 2.15.0)
+vcmp() {
+  local a="$1" b="$2"
+  while [ "$(tr -cd . <<< "$a" | wc -c)" -lt 3 ]; do a="${a}.0"; done
+  while [ "$(tr -cd . <<< "$b" | wc -c)" -lt 3 ]; do b="${b}.0"; done
+  if [ "$a" = "$b" ]; then echo 0
+  elif [ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | head -n 1)" = "$a" ]; then echo -1
+  else echo 1
+  fi
+}
+# admits SPEC RELEASE — a version specifier of a Requires-Dist (">=2.14.0", "==2.15.0",
+# ">=2.14,<2.17", "~=2.14.0", "==2.15.*") admits RELEASE (X.Y.Z)
+admits() {
+  local re='^(===|==|!=|~=|>=|<=|>|<)([0-9][0-9.]*(\.\*)?)$' clause op want c
+  local -a clauses
+  IFS=',' read -ra clauses <<< "$1"
+  [ "${#clauses[@]}" -gt 0 ] || return 1
+  for clause in "${clauses[@]}"; do
+    [[ "$clause" =~ $re ]] || return 1
+    op="${BASH_REMATCH[1]}" want="${BASH_REMATCH[2]}"
+    if [[ "$want" == *'.*' ]]; then
+      case "$op" in
+        ==) [[ "${2}." == "${want%'*'}"* ]] ;;
+        !=) [[ "${2}." != "${want%'*'}"* ]] ;;
+        *) false ;;
+      esac || return 1
+      continue
+    fi
+    c="$(vcmp "$2" "$want")"
+    case "$op" in
+      ==|===) [ "$c" = 0 ] ;;
+      !=) [ "$c" != 0 ] ;;
+      '>=') [ "$c" != -1 ] ;;
+      '<=') [ "$c" != 1 ] ;;
+      '>') [ "$c" = 1 ] ;;
+      '<') [ "$c" = -1 ] ;;
+      '~=') [ "$c" != -1 ] && [[ "${2}." == "${want%.*}."* ]] ;;
+    esac || return 1
+  done
+}
 json_list() { if [ "$#" -gt 0 ]; then printf '%s\n' "$@" | jq -s -c .; else echo '[]'; fi; }
 json_strings() { if [ "$#" -gt 0 ]; then printf '%s\n' "$@" | jq -R . | jq -s -c .; else echo '[]'; fi; }
 toolchain() { local d; for d in "${TOOLCHAIN_DEFS[@]}"; do [ "${d%%|*}" = "$1" ] && { echo "$d"; return 0; }; done; return 1; }
@@ -115,7 +171,7 @@ cmd_plan() {
   done
   [[ "$only" =~ ^[0-9,]*$ ]] || { echo "--only: issue numbers separated by commas" >&2; return 1; }
   only=" ${only//,/ } "
-  local number title labels runtime version kind key full suites def
+  local number title labels runtime version kind key full suites def outage
   local -A newest=() newest_issue=()
   local rows=() tests=() superseded=() retrigger=() skipped=()
   while IFS=$'\t' read -r number title labels; do
@@ -187,8 +243,11 @@ cmd_plan() {
       fi
       retrigger+=("$number")
     fi
-    tests+=("$(jq -nc --argjson i "$number" --arg k "$kind" --arg r "$runtime" --arg v "$version" --arg f "$full" --arg key "$key" --arg s "$suites" \
-      '{issue: $i, kind: $k, runtime: $r, version: $v, full: $f, key: $key, suites: ($s | split(" ") | map(select(. != "" and . != "-")))}')")
+    # the run before hit an upstream outage (land): this run is its second chance
+    outage=false
+    [[ "$labels" != *"|${OUTAGE_LABEL}|"* ]] || outage=true
+    tests+=("$(jq -nc --argjson i "$number" --arg k "$kind" --arg r "$runtime" --arg v "$version" --arg f "$full" --arg key "$key" --arg s "$suites" --argjson o "$outage" \
+      '{issue: $i, kind: $k, runtime: $r, version: $v, full: $f, key: $key, suites: ($s | split(" ") | map(select(. != "" and . != "-"))), outage: $o}')")
   done
   jq -nc --argjson tests "$(json_list ${tests[@]+"${tests[@]}"})" --argjson superseded "$(json_list ${superseded[@]+"${superseded[@]}"})" \
     --argjson retrigger "$(json_list ${retrigger[@]+"${retrigger[@]}"})" --argjson skipped "$(json_list ${skipped[@]+"${skipped[@]}"})" \
@@ -199,6 +258,8 @@ cmd_plan() {
 watch_lib() {
   # shellcheck source=../lib/common.sh
   source "${ROOT}/lib/common.sh"
+  # shellcheck source=../lib/fetch.sh
+  source "${ROOT}/lib/fetch.sh"
   # shellcheck source=../lib/watch.sh
   source "${ROOT}/lib/watch.sh"
 }
@@ -210,17 +271,39 @@ cmd_ml_bump() {
   watch_lib
   case "$runtime" in
     pytorch)
-      # the torchvision release that requires exactly this torch (its Requires-Dist), the newest first
+      # the -gpu image installs the same pins from its CUDA wheel index (Dockerfile.gpu), which the
+      # bot does not build: a torch without a build there is a person's decision (another CUDA and
+      # the GPU nodes' driver), not a pin to move
+      local index cuda="" torch_wheels="" vision_wheels=""
+      index="$(grep -oE 'https://download\.pytorch\.org/whl/cu[0-9]+' "${dir}/Dockerfile.gpu" 2>/dev/null | head -n 1)"
+      if [ -n "$index" ]; then
+        cuda="${index##*/}"
+        torch_wheels="$(watch_get "${index}/torch/")" || { echo "could not read ${index}/torch/" >&2; return 2; }
+        vision_wheels="$(watch_get "${index}/torchvision/")" || { echo "could not read ${index}/torchvision/" >&2; return 2; }
+        grep -qF -e "torch-${version}%2B${cuda}-" -e "torch-${version}+${cuda}-" <<< "$torch_wheels" || {
+          echo "${index}/torch/ has no torch ${version} built for ${cuda}: the -gpu image (Dockerfile.gpu) cannot install it; another CUDA index is a person's decision (the GPU nodes' driver)" >&2
+          return 2
+        }
+      fi
+      # the torchvision pip installs next to this torch: the newest release whose torch requirement
+      # (its Requires-Dist) admits it, an exact pin (torch==2.14.0, up to 0.29.0) or a range
+      # (torch>=2.14.0 since 0.29.1, which builds on torch's stable ABI), with a build on the -gpu
+      # image's CUDA index too
       vision=""
-      local v
+      local v spec admitted=""
       for v in $(watch_get "https://pypi.org/pypi/torchvision/json" | jq -r '.releases | keys[]' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V -r | head -n 12); do
-        if watch_get "https://pypi.org/pypi/torchvision/${v}/json" \
-          | jq -e --arg t "torch==${version}" '[.info.requires_dist[]? | gsub(" "; "") | select(startswith($t))] | length > 0' >/dev/null; then
+        spec="$(watch_get "https://pypi.org/pypi/torchvision/${v}/json" | jq -r '
+          [.info.requires_dist[]? | select(test("^torch *[(=<>!~]") and (test("extra *==") | not))
+            | split(";")[0] | gsub("[ ()]"; "") | ltrimstr("torch")] | first // empty')" || spec=""
+        [ -n "$spec" ] && admits "$spec" "$version" || continue
+        admitted="${admitted:+${admitted}, }${v}"
+        if [ -z "$cuda" ] || grep -qF -e "torchvision-${v}%2B${cuda}-" -e "torchvision-${v}+${cuda}-" <<< "$vision_wheels"; then
           vision="$v"
           break
         fi
       done
-      [ -n "$vision" ] || { echo "no torchvision release on PyPI requires torch==${version}" >&2; return 2; }
+      [ -n "$admitted" ] || { echo "no torchvision release on PyPI admits torch ${version} (its torch requirement)" >&2; return 2; }
+      [ -n "$vision" ] || { echo "${index}/torchvision/ has none of the torchvision releases that admit torch ${version} (${admitted}) built for ${cuda}: the -gpu image (Dockerfile.gpu) cannot install them" >&2; return 2; }
       sed -i -E "s/^torch==[0-9.]+$/torch==${version}/; s/^torchvision==[0-9.]+$/torchvision==${vision}/" "${dir}/requirements-torch.txt"
       echo "torch ${version}, torchvision ${vision}" ;;
     tensorflow)
@@ -391,6 +474,29 @@ cmd_check_e2e() {
   echo "the ${prefix} cases of ${runtime} ${version} ran on the candidate image and passed"
 }
 
+cmd_upstream() {
+  local log="${1:?usage: lang-bot.sh upstream LOG}"
+  [ -f "$log" ] || return 1
+  awk '
+    # a host of the internet, not the candidate (a local or private address, a cluster name)
+    function public(line,   host) {
+      while (match(line, /https:\/\/[A-Za-z0-9.-]+/)) {
+        host = tolower(substr(line, RSTART + 8, RLENGTH - 8))
+        line = substr(line, RSTART + RLENGTH)
+        if (host !~ /\./) continue
+        if (host ~ /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/) continue
+        if (host ~ /(\.local|\.localhost|\.internal|\.svc|\.nip\.io|\.sslip\.io)$/) continue
+        return 1
+      }
+      return 0
+    }
+    n < 5 && /(^|[^0-9A-Za-z])50[0234]([^0-9A-Za-z]|$)|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out/ &&
+      /[Ff]ail|[Ee]rror|ERROR/ && public($0) { print; n++; next }
+    n < 5 && /^(#[0-9]+ )?[0-9]+\.[0-9]+ curl: \(22\) The requested URL returned error: 50[0234]/ { print; n++ }
+    END { exit n ? 0 : 1 }
+  ' "$log"
+}
+
 cmd_runr_pins() {
   local runr="${1:?usage: lang-bot.sh runr-pins RUNR RUNTIME}" runtime="${2:?}" catalog entry pins
   catalog="${runr}/api/resources/runtimes/builtin.json"
@@ -409,16 +515,27 @@ cmd_runr_pins() {
 # status DIR NAME — the status of a test job's result artifact (none: it did not report)
 status() { cat "$1/results/$2/status" 2>/dev/null || echo "no result"; }
 
-# tail_of DIR NAME — the end of a test job's log, for a comment
+# tail_of DIR NAME — the end of a test job's log, for a comment: never an empty block
 tail_of() {
+  local file="$1/results/$2/tail.txt"
   echo '```'
-  tail -n 40 "$1/results/$2/tail.txt" 2>/dev/null || echo "no log: the job did not get that far"
+  if [ ! -f "$file" ]; then
+    echo "no log: the job did not get that far (the run has its whole log)"
+  elif [ -z "$(tr -d '[:space:]' < "$file")" ]; then
+    echo "the log is empty: the step that failed printed nothing into it (the run has the job's whole log)"
+  else
+    tail -n 40 "$file"
+  fi
   echo '```'
 }
 
+# upstream_of DIR NAME — the lines of a failed job's log that show an upstream outage (the job's
+# result: lang-bot.sh upstream), none when it failed for another reason
+upstream_of() { cat "$1/results/$2/upstream" 2>/dev/null || true; }
+
 cmd_land() {
   local dir="${1:?usage: lang-bot.sh land DIR RUN_URL}" run_url="${2:?}" n i test issue kind runtime version full key build
-  local tested comment name subject sha pins rc suite suites failed paths images publish lines note body older deprecated
+  local tested comment name subject sha pins rc suite suites failed paths images publish lines note body older deprecated outage retest
   mkdir -p "$dir/comments"
   : > "$dir/actions"
   n="$(jq length "$dir/tests.json")"
@@ -443,17 +560,61 @@ cmd_land() {
         lines="${lines} (it named no image it built)"
       fi
     fi
+    [ -z "$(upstream_of "$dir" "lang-result-${key}-build")" ] || lines="${lines} (an upstream outage)"
     for suite in $suites; do
-      rc="$(status "$dir" "lang-result-${key}-e2e-${suite}")"
+      name="lang-result-${key}-e2e-${suite}"
+      rc="$(status "$dir" "$name")"
       note=""
-      [ "$rc" != skipped ] || note=" ($(cat "$dir/results/lang-result-${key}-e2e-${suite}/reason" 2>/dev/null || echo "no reason given"))"
+      [ "$rc" != skipped ] || note=" ($(cat "$dir/results/${name}/reason" 2>/dev/null || echo "no reason given"))"
+      if [ "$build" != success ]; then
+        # the e2e job deploys the build's candidate: there was none
+        lines="${lines}"$'\n'"- RunR's \`ci.sh ${suite}\` on the candidate: not run (the build failed)"
+        continue
+      fi
+      [ ! -f "$dir/results/${name}/retried" ] || note="${note} (run once more after an upstream outage)"
+      [ -z "$(upstream_of "$dir" "$name")" ] || note="${note} (an upstream outage)"
       lines="${lines}"$'\n'"- RunR's \`ci.sh ${suite}\` on the candidate: ${rc}${note}"
       case "$rc" in success|skipped) ;; *) failed="${failed:+${failed} }e2e-${suite}" ;; esac
     done
     [ -n "$suites" ] || lines="${lines}"$'\n'"- RunR's e2e: none of its cases deploys this image (the smoke test checks it)"
+    # every failure an upstream server's 5xx (lang-bot.sh upstream): not the release's fault
+    outage=""
+    if [ -n "$failed" ]; then
+      outage=1
+      for name in $failed; do
+        [ -n "$(upstream_of "$dir" "lang-result-${key}-${name}")" ] || { outage=""; break; }
+      done
+    fi
+    retest="$(jq -r '.outage // false' <<< "$test")"
+    if [ -n "$outage" ] && [ "$retest" != true ]; then
+      # nobody is asked: the next run tests it again (plan: the label is no reason to wait)
+      {
+        echo "**Upstream outage: ${runtime} ${full} was not tested to the end.** A server the test downloads from answered with an HTTP 5xx error, which is not this release's fault. Nothing was published or committed, and nobody needs to act: the next run of the language bot tests it again (label \`${OUTAGE_LABEL}\`); a second outage in a row asks a person."
+        echo ""
+        echo "$lines"
+        for name in $failed; do
+          echo ""
+          echo "<details><summary>${name}: the outage</summary>"
+          echo ""
+          echo '```'
+          upstream_of "$dir" "lang-result-${key}-${name}"
+          echo '```'
+          echo ""
+          echo "</details>"
+        done
+        echo ""
+        echo "Run: ${run_url}."
+      } > "$comment"
+      printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" "$issue" "$comment" >> "$dir/actions"
+      continue
+    fi
     if [ -n "$failed" ]; then
       {
-        echo "**Needs attention: ${runtime} ${full} failed.** Nothing was published or committed: the weekly publish holds it."
+        if [ -n "$outage" ]; then
+          echo "**Needs attention: ${runtime} ${full} hit an upstream outage the second run in a row.** A server the test downloads from answered with an HTTP 5xx error again: a person looks whether it is down for longer. Nothing was published or committed: the weekly publish holds it."
+        else
+          echo "**Needs attention: ${runtime} ${full} failed.** Nothing was published or committed: the weekly publish holds it."
+        fi
         echo ""
         echo "$lines"
         for name in $failed; do
@@ -469,8 +630,10 @@ cmd_land() {
         echo "Run: ${run_url}. Fix it (or decide the version waits), then run **Actions → Language tests → Run workflow** with this issue's number; a newer release supersedes this issue by itself."
       } > "$comment"
       printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$ATTENTION_LABEL" "$issue" "$comment" >> "$dir/actions"
+      [ "$retest" != true ] || printf 'unlabel\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" >> "$dir/actions"
       continue
     fi
+    [ "$retest" != true ] || printf 'unlabel\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" >> "$dir/actions"
 
     # green: the change on top of main, when main did not change its images since the tested commit
     tested="$(cat "$dir/results/lang-result-${key}-build/sha")"
@@ -565,7 +728,8 @@ case "$command" in
   lifecycle) cmd_lifecycle "$@" ;;
   catalog) cmd_catalog "$@" ;;
   check-e2e) cmd_check_e2e "$@" ;;
+  upstream) cmd_upstream "$@" ;;
   runr-pins) cmd_runr_pins "$@" ;;
   land) cmd_land "$@" ;;
-  *) sed -n '2,64p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

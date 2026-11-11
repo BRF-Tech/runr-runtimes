@@ -97,7 +97,7 @@ and RunR's guide [docs/executor-development.md](https://github.com/BRF-Tech/runr
 | `hf-serve/` | hf-serve (Python), its CPU and CUDA Dockerfiles and its tests |
 | `ci.sh`, `lib/` | Build, smoke-test, push, patch, patch feed, runtime catalog, mirror and EOL commands |
 | `test/` | Shell tests of `ci.sh`, run without Docker or a registry |
-| `ci/` | `check-dockerfiles.sh`, `check-reqs-mirror.sh`, `images.sh` (the image selection of the workflows), `lang-bot.sh` (the language bot) |
+| `ci/` | `check-dockerfiles.sh`, `check-reqs-mirror.sh`, `fetch.sh` (the workflows' pinned downloads, retried), `images.sh` (the image selection of the workflows), `lang-bot.sh` (the language bot) |
 | `schema/` | The JSON Schemas of the patch feed (`patch-feed.v1.json`) and the runtime catalog (`runtime-catalog.v1.json`), an example of each |
 | `keys/` | `patch-feed.pub`, the public key of the signatures of the patch feed and the runtime catalog |
 | `.github/workflows/` | CI, publish, patch, platform release, heavy GPU images, reqs mirror |
@@ -138,6 +138,11 @@ How every build behaves:
 
 - **Pulls its base images** (`--pull`). Base images come from the reqs mirror
   (`ghcr.io/brf-tech/runr/reqs/…`), never from Docker Hub (`ci/check-dockerfiles.sh`).
+- **Retries its downloads.** Every `curl` of a Dockerfile's `RUN` step retries every error 5
+  times, 10 s apart (`ci/check-dockerfiles.sh` refuses one that does not), and the WebAssembly
+  images' `download` takes a GitHub release asset that `releases/download` does not give (a 504
+  for minutes) through the GitHub API's asset endpoint; the checksums stay pinned. The workflows
+  install their tools the same way (`ci/fetch.sh URL OUT SHA256`, `lib/fetch.sh`).
 - **Is smoke-tested** after it is built (`lib/smoke.sh`; the ML runtimes: `lib/build-ml.sh`).
   `--no-smoke` skips this for local builds.
   - A language runtime answers a handler over HTTP, called from a curl container in its network
@@ -216,7 +221,8 @@ published.
 
 **Language tests** (`lang-test.yml`, after every run of Language releases and by hand: **Actions →
 Language tests → Run workflow**, or `gh workflow run lang-test.yml -f issue=31`) tests every open
-`released` issue that has no label yet. Of several issues of one image it tests the newest
+`released` issue that has no label yet, or only `lang: upstream outage` (an outage stopped the run
+before). Of several issues of one image it tests the newest
 release and closes the older ones as superseded.
 
 - **A language version.** The base images are mirrored first, then `exec-<runtime>:<X.Y>` is built
@@ -239,15 +245,20 @@ release and closes the older ones as superseded.
   version of the image is built and smoke-tested (`ci.sh build java`), this repository's tests run,
   and the newest version is pushed as `candidates/exec-java:<X.Y.Z>-<tool>-<release>`; RunR's main
   e2e then runs on it as for a language version.
-- **An ML framework.** The pin moves (torch with the torchvision release that requires it, or
-  tensorflow's CPU and CUDA pins), the CPU image is built and smoke-tested, this repository's
-  tests run, and the image is pushed as `candidates/exec-<runtime>:<X.Y.Z>`. RunR's main e2e then
-  runs with it as the only version of that runtime and its ML case (`test:e2e --ml`): one HTTP
-  function that does a matrix product with the framework and fails on a wrong result. The CPU
-  images fit a standard runner (compressed, measured on GHCR on 2026-11-07: `exec-pytorch:2.14`
-  410 MiB, `exec-tensorflow:2.21` 495 MiB). RunR releases up to 0.6.7 have no ML case: until
-  RunR's next release, the bot reports the suite as skipped and the build and smoke test decide.
-  The `-gpu` images are not tested here: the heavy-images workflow builds them.
+- **An ML framework.** The pin moves (torch with the torchvision pip installs next to it: the
+  newest release whose torch requirement admits it, an exact `torch==X` up to torchvision 0.29.0
+  or a range such as `torch>=2.14.0` since 0.29.1, and that the `-gpu` image's CUDA wheel index
+  has too; or tensorflow's CPU and CUDA pins), the CPU image is built and smoke-tested, this
+  repository's tests run, and the image is pushed as `candidates/exec-<runtime>:<X.Y.Z>`. RunR's
+  main e2e then runs with it as the only version of that runtime and its ML case
+  (`test:e2e --ml`): one HTTP function that does a matrix product with the framework and fails on
+  a wrong result. The CPU images fit a standard runner (compressed, measured on GHCR on
+  2026-11-07: `exec-pytorch:2.14` 410 MiB, `exec-tensorflow:2.21` 495 MiB). RunR releases up to
+  0.6.7 have no ML case: until RunR's next release, the bot reports the suite as skipped and the
+  build and smoke test decide. The `-gpu` images are not tested here: the heavy-images workflow
+  builds them. A torch without a build on the `-gpu` image's CUDA wheel index (`Dockerfile.gpu`,
+  cu126), or without a torchvision there, is not moved: the bump fails and says so, since another
+  CUDA (and the GPU nodes' driver it needs) is a person's decision.
 - **A WebAssembly toolchain** (`ci/lang-bot.sh wasm-bump`). Its `ARG` moves in every
   `runtimes/wasm-*/Dockerfile` that has it, with the SHA256 of its downloads (Spin, wasi-sdk and
   wasm-tools: the release assets; zig: ziglang.org's index), and the base image of the reqs mirror
@@ -269,10 +280,23 @@ release and closes the older ones as superseded.
   last release pins of that runtime. The language runtimes pin nothing there (RunR finds their
   versions in the registry), so nothing moves in RunR. When `main` changed the images' directories
   after the tested commit, nothing is committed, and the next run tests it again.
-- **Red:** the label `needs attention` and a comment with what failed. Nothing is committed: the
-  weekly publish holds a language version, and a tool, ML or toolchain pin stays where it was.
-  Run the workflow with the issue's number to test it again (it takes the label off), or wait for
-  a newer release to supersede the issue.
+- **Red:** the label `needs attention` and a comment with what failed: the end of each failed
+  job's log, into which every step of the job prints (a step that printed nothing says so instead
+  of an empty block). Nothing is committed: the weekly publish holds a language version, and a
+  tool, ML or toolchain pin stays where it was. Run the workflow with the issue's number to test
+  it again (it takes the label off), or wait for a newer release to supersede the issue.
+- **An upstream outage** is not the release's fault, and pages nobody. The downloads retry (the
+  Dockerfiles' `curl`, `ci/fetch.sh` for the tools the jobs install, a GitHub release asset
+  through the GitHub API when `releases/download` gives 504). A RunR suite that failed on an
+  upstream server's 5xx (a chart, an image or a package its e2e downloads) runs once more. A test
+  whose every failure is such a 5xx (`ci/lang-bot.sh upstream`: an HTTP 500/502/503/504 of a
+  public https URL on a line that failed, or a `RUN` step's `curl: (22)`; never a local address,
+  where the candidate answers) gets the label `lang: upstream outage` and a comment that says so,
+  and the next run tests it again by itself; a second outage in a row is `needs attention`.
+- **The bot's own tests run on the change.** They read the pins from the files the bump moves
+  (`test/catalog_test.sh`: one Spin CLI in every WebAssembly image, whichever it is;
+  `test/lang_bot_test.sh` bumps from the checkout's pin to the next release), so a green
+  candidate is not held by a test that names the old pin.
 
 **The gate.** The publish workflow sets `LANG_GATE=1`. A routine build of an upstream version
 other than the one a tag already runs is pushed only when `runtimes/<runtime>/tested-versions`
@@ -284,7 +308,7 @@ What the workflows need besides their `GITHUB_TOKEN`:
 
 - **Language releases:** `issues: write`.
 - **Language tests:**
-  - `issues: write`;
+  - `issues: write` (the labels `needs attention`, `lang: passed`, `lang: upstream outage`);
   - `packages: write` (the base images mirrored, the candidates pushed);
   - in its landing job alone, `contents: write` and `actions: write` (the publish workflow).
 

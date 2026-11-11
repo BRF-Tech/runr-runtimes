@@ -101,8 +101,7 @@ jobs:
       # crane reads the login above from the Docker config
       - name: Install crane (pinned, checksum verified)
         run: |
-          curl -fsSL -o /tmp/crane.tar.gz "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
-          echo "${CRANE_SHA256}  /tmp/crane.tar.gz" | sha256sum -c -
+          bash ci/fetch.sh "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" /tmp/crane.tar.gz "${CRANE_SHA256}"
           sudo tar -xzf /tmp/crane.tar.gz -C /usr/local/bin crane
       - run: ./ci.sh mirror-bases
 

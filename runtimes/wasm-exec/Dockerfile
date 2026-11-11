@@ -38,6 +38,9 @@ ARG WASM_TOOLS_SHA256_AMD64=b6ad301b8ac65e283703d1a5cf79280058a5f5699f8ff1fcaf66
 ARG WASM_TOOLS_SHA256_ARM64=e3d497196bf99a31a62c885d2f5c3aa1e4d4a6bc02c1bff735ffa6a4c7aa9c2f
 ARG TARGETARCH
 
+# download OUT URL: curl retries every error 5 times, 10 s apart; a GitHub release asset that still
+# fails comes through the GitHub API's asset endpoint, which answers when releases/download gives
+# 504 (test/fetch_test.sh runs this function)
 RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
@@ -47,18 +50,28 @@ RUN set -eu; \
       arm64) spin_arch=aarch64; spin_sum="$SPIN_SHA256_ARM64"; sdk_arch=arm64; sdk_sum="$WASI_SDK_SHA256_ARM64"; zig_arch=aarch64; zig_sum="$ZIG_SHA256_ARM64"; wt_arch=aarch64; wt_sum="$WASM_TOOLS_SHA256_ARM64" ;; \
       *) echo "unsupported architecture ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/spin.tar.gz "https://github.com/spinframework/spin/releases/download/v${SPIN_VERSION}/spin-v${SPIN_VERSION}-static-linux-${spin_arch}.tar.gz"; \
+    download() { \
+      code="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 -w '%{http_code}' -o "$1" "$2" 2>/dev/null)" && return 0; \
+      case "$2" in https://github.com/*/releases/download/*) \
+        p="${2#https://github.com/}"; t="${p#*/releases/download/}"; \
+        echo "${2}: no answer after its retries, the release asset through the GitHub API instead" >&2; \
+        a="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 "https://api.github.com/repos/${p%%/releases/download/*}/releases/tags/${t%/*}" 2>/dev/null | tr -d ' \n\r' | grep -oE "\"url\":\"[^\"]+/releases/assets/[0-9]+\",\"id\":[0-9]+,\"node_id\":\"[^\"]+\",\"name\":\"${t##*/}\"" | cut -d'"' -f4)"; \
+        [ -n "$a" ] && curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 -H 'Accept: application/octet-stream' -o "$1" "$a" 2>/dev/null && return 0 ;; \
+      esac; \
+      echo "download failed: ${2} (HTTP ${code:-000})" >&2; return 1; \
+    }; \
+    download /tmp/spin.tar.gz "https://github.com/spinframework/spin/releases/download/v${SPIN_VERSION}/spin-v${SPIN_VERSION}-static-linux-${spin_arch}.tar.gz"; \
     echo "${spin_sum}  /tmp/spin.tar.gz" | sha256sum -c -; \
     mkdir -p /tmp/spin; tar -xzf /tmp/spin.tar.gz -C /tmp/spin; \
     install -m 0755 "$(find /tmp/spin -type f -name spin | head -n 1)" /usr/local/bin/spin; \
-    curl -fsSL -o /tmp/wasi-sdk.tar.gz "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-${sdk_arch}-linux.tar.gz"; \
+    download /tmp/wasi-sdk.tar.gz "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sdk-${WASI_SDK_VERSION}.0-${sdk_arch}-linux.tar.gz"; \
     echo "${sdk_sum}  /tmp/wasi-sdk.tar.gz" | sha256sum -c -; \
     mkdir -p /opt/wasi-sdk; tar -xzf /tmp/wasi-sdk.tar.gz -C /opt/wasi-sdk --strip-components=1; \
-    curl -fsSL -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-${zig_arch}-linux-${ZIG_VERSION}.tar.xz"; \
+    download /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-${zig_arch}-linux-${ZIG_VERSION}.tar.xz"; \
     echo "${zig_sum}  /tmp/zig.tar.xz" | sha256sum -c -; \
     mkdir -p /opt/zig; tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1; \
     ln -s /opt/zig/zig /usr/local/bin/zig; \
-    curl -fsSL -o /tmp/wasm-tools.tar.gz "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASM_TOOLS_VERSION}/wasm-tools-${WASM_TOOLS_VERSION}-${wt_arch}-linux.tar.gz"; \
+    download /tmp/wasm-tools.tar.gz "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASM_TOOLS_VERSION}/wasm-tools-${WASM_TOOLS_VERSION}-${wt_arch}-linux.tar.gz"; \
     echo "${wt_sum}  /tmp/wasm-tools.tar.gz" | sha256sum -c -; \
     mkdir -p /tmp/wasm-tools; tar -xzf /tmp/wasm-tools.tar.gz -C /tmp/wasm-tools --strip-components=1; \
     install -m 0755 /tmp/wasm-tools/wasm-tools /usr/local/bin/wasm-tools; \

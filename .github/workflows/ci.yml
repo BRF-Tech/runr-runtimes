@@ -32,12 +32,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install shellcheck and actionlint (pinned, checksums verified)
         run: |
-          curl -fsSL -o /tmp/shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
-          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.xz" | sha256sum -c -
+          bash ci/fetch.sh "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" /tmp/shellcheck.tar.xz "${SHELLCHECK_SHA256}"
           tar -xJf /tmp/shellcheck.tar.xz -C /tmp
           sudo install -m 0755 "/tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
-          curl -fsSL -o /tmp/actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tar.gz" | sha256sum -c -
+          bash ci/fetch.sh "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" /tmp/actionlint.tar.gz "${ACTIONLINT_SHA256}"
           tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint
       - name: shellcheck
         run: shellcheck -x -S warning ci.sh lib/*.sh ci/*.sh test/*.sh runtimes/*/entrypoint.sh runtimes/*/runr-*

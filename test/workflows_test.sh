@@ -2,14 +2,18 @@
 # Tests the repository's workflows as text, without GitHub: every workflow reads contents only by
 # default, has a concurrency group, pins every action to a full commit SHA with its version (a
 # composite action of this repository by its path), checks every download against a pinned SHA256
-# and uses only the secrets its job needs. The language bot:
+# and retries it (ci/fetch.sh: an upstream's 504 for a minute fails no job), and uses only the
+# secrets its job needs. The language bot:
 #   - lang-releases.yml watches every week and by hand (ci.sh watch) and files an issue per finding;
 #   - lang-test.yml runs after it and by hand, never on a push or a pull request; it is the only
 #     workflow that writes contents, and its one push is ci/lang-bot.sh's
 #     `git push -q origin HEAD:refs/heads/main` (no other refspec, tag, deletion or force); it
 #     tests the languages, the tools of their images, the ML runtimes and the WebAssembly
 #     toolchains with RunR's public last release (a runtime that release lacks skips its e2e), and
-#     nothing of RunR's private repository: no deploy key, no origin;
+#     nothing of RunR's private repository: no deploy key, no origin; every step of its build and
+#     e2e jobs before the suite prints into the job's log the red comment shows, a suite an upstream
+#     outage stopped runs once more, the results say an outage is one (lang-bot.sh upstream), and
+#     the outage label is made and taken off;
 #   - the publish workflow holds an untested language version (LANG_GATE), every language runtime
 #     has its tested-versions.
 #
@@ -44,6 +48,11 @@ for wf in "$wfdir"/*.yml; do
     | grep -vE 'uses: \./\.github/actions/[a-z0-9-]+$' || true)"
   [ -z "$bad" ] || fail "${name}: actions not pinned to a full commit SHA with its version: ${bad}"
   [ "$(grep -cE 'curl [^|]*-o ' "$wf" || true)" = "$(grep -cE 'sha256sum -c' "$wf" || true)" ] || fail "${name}: a download without its checksum"
+  # a download through ci/fetch.sh names its pinned SHA256; one with curl itself retries
+  bad="$(grep -E '(^|[ /])ci/fetch\.sh( |$)' "$wf" | grep -vE '^ +bash (runtimes-repo/)?ci/fetch\.sh "https://[^"]+" /tmp/[A-Za-z0-9._-]+ "\$\{[A-Z0-9_]+_SHA256\}"$' || true)"
+  [ -z "$bad" ] || fail "${name}: a ci/fetch.sh download without its pinned SHA256: ${bad}"
+  bad="$(grep -E 'curl [^|]*-o ' "$wf" | grep -v -- '--retry' || true)"
+  [ -z "$bad" ] || fail "${name}: a download that does not retry (bash ci/fetch.sh URL OUT SHA256): ${bad}"
   allowed="secrets.GITHUB_TOKEN"
   case "$name" in
     publish.yml|patch.yml|platform-release.yml) allowed="$allowed secrets.RUNR_PATCH_FEED_COSIGN_KEY secrets.RUNR_PATCH_FEED_COSIGN_PASSWORD" ;;
@@ -60,7 +69,7 @@ for wf in "$wfdir"/*.yml; do
   pushes="$(grep -nE '(^|[^-])git([^|]* )?push( |$)' "$wf" || true)"
   [ -z "$pushes" ] || fail "${name} pushes with git: ${pushes}"
 done
-echo "ok - every workflow: contents: read, a concurrency group, actions pinned, downloads checked, only the secrets it needs, no git push"
+echo "ok - every workflow: contents: read, a concurrency group, actions pinned, downloads checked and retried, only the secrets it needs, no git push"
 
 # --- lang-releases.yml ------------------------------------------------------------------------------
 rel="$wfdir/lang-releases.yml"
@@ -96,6 +105,16 @@ for kind in language tool ml wasm; do
 done
 grep -qF 'bash ci/lang-bot.sh tool-bump "$RUNTIME" "$FULL"' "$lt" || fail "lang-test.yml does not move a tool's pin through ci/lang-bot.sh"
 grep -qF 'runtime yet: it comes with its next release' <<<"$(job "$lt" e2e)" || fail "lang-test.yml's e2e does not skip a runtime RunR's release lacks"
+# the red comment's log: every step of the build job past the setup prints into build.log (crane,
+# the four builds, this repository's tests), of the e2e job into e2e.log up to the suite
+[ "$(grep -cF 'exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1' <<<"$(job "$lt" build)")" = 6 ] || fail "lang-test.yml's build steps do not all print into build.log"
+[ "$(grep -cF 'exec > >(tee -a "$RUNNER_TEMP/e2e.log") 2>&1' <<<"$(job "$lt" e2e)")" = 2 ] || fail "lang-test.yml's e2e steps do not all print into e2e.log"
+# an upstream outage: the suite once more, the results of both jobs say it, the label made and taken off
+grep -qF 'outage="$(bash ../runtimes-repo/ci/lang-bot.sh upstream "$RUNNER_TEMP/e2e.log")"' <<<"$(job "$lt" e2e)" || fail "lang-test.yml does not run a suite an outage stopped once more"
+grep -qF 'bash ci/lang-bot.sh upstream "$RUNNER_TEMP/build.log" > "$RUNNER_TEMP/result/upstream"' <<<"$(job "$lt" build)" || fail "the build's result does not say an outage"
+grep -qF 'bash runtimes-repo/ci/lang-bot.sh upstream "$RUNNER_TEMP/e2e.log" > "$RUNNER_TEMP/result/upstream"' <<<"$(job "$lt" e2e)" || fail "the e2e's result does not say an outage"
+grep -qF 'gh label create "lang: upstream outage"' "$lt" || fail "lang-test.yml does not make the outage label"
+grep -qF 'unlabel) gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --remove-label "$arg"' "$lt" || fail "lang-test.yml does not take a label off"
 # the one push: HEAD:refs/heads/main of this repository, a fast-forward
 bot="$here/ci/lang-bot.sh"
 gitcmd='^[^#]*(^|[^A-Za-z_-])git( -[cC] [^ ]+)*'

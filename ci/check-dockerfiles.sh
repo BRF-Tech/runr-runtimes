@@ -13,6 +13,8 @@ set -euo pipefail
 #     the CI build jobs) gives every RUN step
 #     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=unix:///dev/otel-grpc.sock, and Spin exits with "Failed to
 #     initialize telemetry: invalid URI" before it runs the command.
+#  3. Every curl a RUN step runs retries (--retry): an upstream's 502/503/504 for a minute (GitHub's
+#     releases/download) does not fail a build, and with it a candidate of the language bot.
 #
 #   bash ci/check-dockerfiles.sh                 the tracked Dockerfiles
 #   bash ci/check-dockerfiles.sh FILE...         these files
@@ -59,6 +61,24 @@ spin_without_otel_off() {
   ' "$@"
 }
 
+# file:line of every curl a RUN step runs without --retry
+curl_without_retry() {
+  awk '
+    function check(s) { if (s ~ /(^|[^A-Za-z0-9_.-])curl[[:space:]]+-/ && s !~ /--retry/) print FILENAME ":" FNR }
+    FNR == 1 { inrun = 0 }
+    inrun {
+      if ($0 ~ /^[[:space:]]*#/) next
+      check($0)
+      if ($0 !~ /\\[[:space:]]*$/) inrun = 0
+      next
+    }
+    toupper($1) == "RUN" {
+      check($0)
+      if ($0 ~ /\\[[:space:]]*$/) inrun = 1
+    }
+  ' "$@"
+}
+
 if [ "$#" -gt 0 ]; then
   dockerfiles=("$@")
 else
@@ -85,8 +105,14 @@ while IFS= read -r where; do
   failed=$((failed + 1))
 done < <(spin_without_otel_off "${dockerfiles[@]}")
 
+while IFS= read -r where; do
+  [ -n "$where" ] || continue
+  echo "✗ ${where}: RUN runs curl without --retry (curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30)"
+  failed=$((failed + 1))
+done < <(curl_without_retry "${dockerfiles[@]}")
+
 if [ "$failed" -gt 0 ]; then
   exit 1
 fi
 
-echo "✓ ${#dockerfiles[@]} Dockerfiles: ${bases} base images, none from Docker Hub; every Spin RUN step has OTEL_SDK_DISABLED=true"
+echo "✓ ${#dockerfiles[@]} Dockerfiles: ${bases} base images, none from Docker Hub; every Spin RUN step has OTEL_SDK_DISABLED=true; every curl retries"
