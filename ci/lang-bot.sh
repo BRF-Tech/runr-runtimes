@@ -4,8 +4,9 @@
 #
 #   ci/lang-bot.sh plan ISSUES.json [--only=N,…]
 #       which issues of lang-releases.yml (`ci.sh watch`) this run tests: JSON {tests: [{issue,
-#       kind, runtime, version, full, key, suites, outage}], superseded: [{issue, by}], retrigger: [issue],
-#       skipped: [{issue, reason}], attention: []}. kind "language" (the runtimes of RUNTIME_DEFS
+#       kind, runtime, version, full, key, suites, outage}], archive: [{issue, runtime, version,
+#       eol}], superseded: [{issue, by}], retrigger: [issue], skipped: [{issue, reason}],
+#       attention: []}. kind "language" (the runtimes of RUNTIME_DEFS
 #       in lib/common.sh: python, nodejs, go, php, java, dotnet, ruby, bun; version is the
 #       major.minor, full the release), "tool" (a tool a language image pins, LANG_TOOL_DEFS:
 #       maven, maven-dependency-plugin; version and full its release), "ml" (pytorch, tensorflow:
@@ -13,7 +14,9 @@
 #       the WebAssembly images: spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk,
 #       rust). suites: RunR's e2e suites the test runs. Of several open issues of one image (a
 #       language version, a tool, an ML runtime, a toolchain) the newest is tested, the older ones
-#       superseded. An end-of-life notice is for people (skipped), an issue labelled "lang: passed"
+#       superseded. An end-of-life notice of a language version is for people until its date
+#       (skipped: RunR's reminders count down), archived once the date is past (archive: land,
+#       ci/lang-bot.sh archive); an issue labelled "lang: passed"
 #       is done, one labelled "needs attention" waits unless the run names it (--only), which takes
 #       the label off. One labelled "lang: upstream outage" is tested again (outage: true): the run
 #       before failed on an upstream server's 5xx alone.
@@ -21,8 +24,10 @@
 #       the framework pin of an ML runtime moved to VERSION in this checkout: torch with the
 #       torchvision pip installs next to it, the newest release whose torch requirement admits it
 #       (PyPI: torch==X up to torchvision 0.29.0, a range like torch>=2.14.0 since 0.29.1), both
-#       built on the CUDA wheel index of the -gpu image (Dockerfile.gpu; exit 2 when one is not:
-#       another CUDA is a person's decision), tensorflow-cpu with tensorflow[and-cuda]
+#       built on the CUDA wheel index of the -gpu image (Dockerfile.gpu), tensorflow-cpu with
+#       tensorflow[and-cuda]. Exit 4, held: the release has no wheel on that CUDA index (torch, or
+#       every torchvision that admits it); the CPU and GPU images stay on their pin together and
+#       nobody is asked (the land closes the issue as held). Exit 2: no torchvision admits it
 #   ci/lang-bot.sh wasm-bump TOOL VERSION
 #       a toolchain of the WebAssembly images moved to VERSION in this checkout: its ARG in every
 #       Dockerfile that has it, the SHA256 of its downloads (Spin, wasi-sdk, wasm-tools: of the
@@ -42,6 +47,13 @@
 #       version has an entry already, which stays. The landing runs it for the published versions
 #       below a new one of a runtime that supports only its newest release (filter newest-minor:
 #       Bun)
+#   ci/lang-bot.sh archive RUNTIME VERSION EOL DIGEST
+#       the records of a version past its end of life EOL whose image DIGEST the registry keeps as
+#       exec-RUNTIME:eol-VERSION (lib/eol.sh eol_archive_image): "VERSION EOL DIGEST" into
+#       runtimes/RUNTIME/archived-versions, VERSION out of tested-versions and of a Dockerfile's
+#       *_FIXED_RELEASES (exec-php), and {eol: EOL} for it in versionDiscovery.lifecycle of
+#       runtime.yaml (RunR keeps the end of life of its projects' version whatever endoflife.date
+#       says). The build, the watch and the patch feed leave an archived version out
 #   ci/lang-bot.sh catalog RUNR RUNTIME VERSION IMAGE
 #       a checkout of BRF-Tech/runr (RUNR) offers RUNTIME at VERSION alone, with IMAGE (its
 #       built-in catalog api/resources/runtimes/builtin.json), and no other runtime but Python
@@ -82,9 +94,14 @@
 #       lang-bot.sh upstream): then it is labelled "lang: upstream outage" and the next run tests
 #       it again; a second outage in a row is "needs attention". Each test lands in a process of
 #       its own: one that fails is reported ("needs attention", with its log) and the others still
-#       land. DIR/actions: what the issues get, one action per line (comment ISSUE FILE, label
-#       ISSUE LABEL, unlabel ISSUE LABEL, close ISSUE), and at the end one publish IMAGES for the
-#       main the run left: every image a landed test touched, once
+#       land. A test its bump held (ml-bump exit 4: build status "held") is closed as not planned
+#       with the reason, nobody asked. Then every version of DIR/archive.json past its end of life
+#       is archived, each in a process of its own (archive-one): the registry (the image as
+#       eol-<version>, the floating tag gone), its records on main (archive), the issue closed;
+#       LANG_ARCHIVE_IMAGE replaces the registry step (the tests). DIR/actions: what the issues
+#       get, one action per line (comment ISSUE FILE, label ISSUE LABEL, unlabel ISSUE LABEL, close
+#       ISSUE [REASON]), and at the end one publish IMAGES for the main the run left: every image a
+#       landed test or an archive touched, once
 #
 # Needs bash, jq, curl (ml-bump, wasm-bump, tool-bump), sha256sum, sha512sum and GNU sed, sort and
 # date.
@@ -186,13 +203,26 @@ cmd_plan() {
   done
   [[ "$only" =~ ^[0-9,]*$ ]] || { echo "--only: issue numbers separated by commas" >&2; return 1; }
   only=" ${only//,/ } "
-  local number title labels runtime version kind key full suites def outage
+  local number title labels runtime version kind key full suites def outage date today
   local -A newest=() newest_issue=()
-  local rows=() tests=() superseded=() retrigger=() skipped=()
+  local rows=() tests=() superseded=() retrigger=() skipped=() archive=()
+  today="${LANG_TODAY:-$(date -u +%Y-%m-%d)}"
   while IFS=$'\t' read -r number title labels; do
     [ -n "$number" ] || continue
+    # an end of life: a notice for people until its date (RunR's reminders count down), archived
+    # by the bot once the date is past
+    if [[ "$title" =~ ^lang:\ ([a-z0-9-]+)\ ([0-9]+\.[0-9]+)\ end\ of\ life\ ([0-9]{4}-[0-9]{2}-[0-9]{2})$ ]] \
+      && [[ "$LANGUAGES" == *" ${BASH_REMATCH[1]} "* ]] && [[ "${BASH_REMATCH[3]}" < "$today" ]]; then
+      if [ "$only" != "  " ] && [[ "$only" != *" ${number} "* ]]; then
+        skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "not named in this run"}')")
+      else
+        archive+=("$(jq -nc --argjson i "$number" --arg r "${BASH_REMATCH[1]}" --arg v "${BASH_REMATCH[2]}" --arg d "${BASH_REMATCH[3]}" \
+          '{issue: $i, runtime: $r, version: $v, eol: $d}')")
+      fi
+      continue
+    fi
     if [[ "$title" =~ ^lang:\ [a-z0-9-]+\ [0-9.]+\ end\ of\ life ]]; then
-      skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "an end-of-life notice, for people"}')")
+      skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "an end-of-life notice, for people until its date"}')")
       continue
     fi
     [[ "$title" =~ ^lang:\ ([a-z0-9-]+)\ ([0-9]+(\.[0-9]+)*)\ released$ ]] || continue
@@ -266,7 +296,8 @@ cmd_plan() {
   done
   jq -nc --argjson tests "$(json_list ${tests[@]+"${tests[@]}"})" --argjson superseded "$(json_list ${superseded[@]+"${superseded[@]}"})" \
     --argjson retrigger "$(json_list ${retrigger[@]+"${retrigger[@]}"})" --argjson skipped "$(json_list ${skipped[@]+"${skipped[@]}"})" \
-    '{tests: ($tests | sort_by(.key)), superseded: $superseded, retrigger: $retrigger, attention: [], skipped: $skipped}'
+    --argjson archive "$(json_list ${archive[@]+"${archive[@]}"})" \
+    '{tests: ($tests | sort_by(.key)), archive: ($archive | sort_by(.runtime, .version)), superseded: $superseded, retrigger: $retrigger, attention: [], skipped: $skipped}'
 }
 
 # the watch's fetch (lib/watch.sh: WATCH_FIXTURES answers in the tests)
@@ -287,17 +318,18 @@ cmd_ml_bump() {
   case "$runtime" in
     pytorch)
       # the -gpu image installs the same pins from its CUDA wheel index (Dockerfile.gpu), which the
-      # bot does not build: a torch without a build there is a person's decision (another CUDA and
-      # the GPU nodes' driver), not a pin to move
-      local index cuda="" torch_wheels="" vision_wheels=""
+      # bot does not build: a release without a wheel there is held (exit 4), the CPU and GPU images
+      # stay on their pin together, and a newer release (or patch) with the wheel moves them
+      local index cuda="" torch_wheels="" vision_wheels="" current
+      current="$(sed -n 's/^torch==//p' "${dir}/requirements-torch.txt" | head -n 1)"
       index="$(grep -oE 'https://download\.pytorch\.org/whl/cu[0-9]+' "${dir}/Dockerfile.gpu" 2>/dev/null | head -n 1)"
       if [ -n "$index" ]; then
         cuda="${index##*/}"
         torch_wheels="$(watch_get "${index}/torch/")" || { echo "could not read ${index}/torch/" >&2; return 2; }
         vision_wheels="$(watch_get "${index}/torchvision/")" || { echo "could not read ${index}/torchvision/" >&2; return 2; }
         grep -qF -e "torch-${version}%2B${cuda}-" -e "torch-${version}+${cuda}-" <<< "$torch_wheels" || {
-          echo "${index}/torch/ has no torch ${version} built for ${cuda}: the -gpu image (Dockerfile.gpu) cannot install it; another CUDA index is a person's decision (the GPU nodes' driver)" >&2
-          return 2
+          echo "held: no ${cuda} wheel of torch ${version} (${index}/torch/, the -gpu image's index); CPU and GPU stay on torch ${current}" >&2
+          return 4
         }
       fi
       # the torchvision pip installs next to this torch: the newest release whose torch requirement
@@ -318,7 +350,7 @@ cmd_ml_bump() {
         fi
       done
       [ -n "$admitted" ] || { echo "no torchvision release on PyPI admits torch ${version} (its torch requirement)" >&2; return 2; }
-      [ -n "$vision" ] || { echo "${index}/torchvision/ has none of the torchvision releases that admit torch ${version} (${admitted}) built for ${cuda}: the -gpu image (Dockerfile.gpu) cannot install them" >&2; return 2; }
+      [ -n "$vision" ] || { echo "held: no ${cuda} wheel of a torchvision that admits torch ${version} (${admitted}; ${index}/torchvision/, the -gpu image's index); CPU and GPU stay on torch ${current}" >&2; return 4; }
       sed -i -E "s/^torch==[0-9.]+$/torch==${version}/; s/^torchvision==[0-9.]+$/torchvision==${vision}/" "${dir}/requirements-torch.txt"
       echo "torch ${version}, torchvision ${vision}" ;;
     tensorflow)
@@ -429,6 +461,81 @@ cmd_lifecycle() {
   cat "$out" > "$file"
   rm -f -- "$out"
   echo "${version}: deprecated ${today}, sunset ${sunset}"
+}
+
+cmd_archive() {
+  local runtime="${1:?usage: lang-bot.sh archive RUNTIME VERSION EOL DIGEST}" version="${2:?}" eol="${3:?}" digest="${4:?}"
+  local dir file out
+  [[ "$LANGUAGES" == *" ${runtime} "* ]] || { echo "${runtime}: not a language runtime" >&2; return 1; }
+  [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "${version}: not a version X.Y" >&2; return 1; }
+  [[ "$eol" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "${eol}: not a date" >&2; return 1; }
+  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "${digest}: not a digest" >&2; return 1; }
+  dir="${ROOT}/runtimes/${runtime}"
+  [ -f "${dir}/runtime.yaml" ] || { echo "no runtimes/${runtime}/runtime.yaml" >&2; return 1; }
+  out="$(mktemp)"
+
+  # the record: archived-versions, one line per version, the header first
+  file="${dir}/archived-versions"
+  if [ ! -f "$file" ]; then
+    cat > "$file" <<EOF
+# The versions of this runtime past their end of life that the language bot archived
+# (ci/lang-bot.sh archive, .github/workflows/lang-test.yml): "<major.minor> <end of life> <digest>".
+# The image stays as ghcr.io/brf-tech/runr/exec-${runtime}:${ARCHIVE_TAG_PREFIX}<major.minor> with its
+# patch tags; its floating tag is gone, so RunR's discovery no longer offers it (its projects keep
+# the version, locked as end-of-life) and the build, the watch and the patch feed leave it out.
+EOF
+  fi
+  awk -v v="$version" '/^#/ || NF == 0 || $1 != v' "$file" > "$out"
+  echo "${version} ${eol} ${digest}" >> "$out"
+  { grep '^#' "$out" || true; grep -v '^#' "$out" | grep -v '^$' | sort -V || true; } > "$file"
+
+  # tested-versions: no current version any more
+  file="${dir}/tested-versions"
+  if [ -f "$file" ]; then
+    awk -v v="$version" '/^#/ || NF == 0 || $1 != v' "$file" > "$out"
+    cat "$out" > "$file"
+  fi
+
+  # a Dockerfile's fixed releases of its versions (exec-php's PHP_FIXED_RELEASES): not this one
+  file="${dir}/Dockerfile"
+  if [ -f "$file" ] && grep -qE '^ARG [A-Z_]*_FIXED_RELEASES=' "$file"; then
+    awk -v v="${version}." '
+      /^ARG [A-Z_]*_FIXED_RELEASES="/ {
+        name = $0; sub(/=.*/, "", name)
+        list = $0; sub(/^[^"]*"/, "", list); sub(/".*$/, "", list)
+        n = split(list, w, " "); kept = ""
+        for (i = 1; i <= n; i++) if (index(w[i], v) != 1) kept = kept (kept == "" ? "" : " ") w[i]
+        print name "=\"" kept "\""; next
+      }
+      { print }
+    ' "$file" > "$out"
+    cat "$out" > "$file"
+  fi
+
+  # RunR: the version's end of life from the manifest (versionDiscovery.lifecycle), whatever
+  # endoflife.date answers (RuntimeLifecycle::apply sets it on the version's executor_images row)
+  file="${dir}/runtime.yaml"
+  awk -v v="$version" -v d="$eol" '
+    function add() { if (!done) { if (!lc) print "  lifecycle:"; print "    \"" v "\": {eol: \"" d "\"}"; done = 1 } }
+    state == "lc" && !/^    / { add(); state = /^[^ #]/ ? "" : "vd" }
+    state == "vd" && /^[^ #]/ { add(); state = "" }
+    /^versionDiscovery:/ { state = "vd"; print; next }
+    state == "vd" && /^  lifecycle:/ { lc = 1; state = "lc"; print; next }
+    state == "lc" && index($0, "    \"" v "\":") == 1 {
+      done = 1
+      line = $0
+      if (line ~ /eol: *"[^"]*"/) sub(/eol: *"[^"]*"/, "eol: \"" d "\"", line)
+      else if (line ~ /\{ *\}/) sub(/\{ *\}/, "{eol: \"" d "\"}", line)
+      else sub(/\} *$/, ", eol: \"" d "\"}", line)
+      print line; next
+    }
+    { print }
+    END { if (state != "") add() }
+  ' "$file" > "$out"
+  grep -q '^versionDiscovery:' "$out" || { rm -f -- "$out"; echo "runtimes/${runtime}/runtime.yaml has no versionDiscovery" >&2; return 1; }
+  cat "$out" > "$file"
+  rm -f -- "$out"
+  echo "${runtime} ${version}: archived (${digest}, end of life ${eol})"
 }
 
 cmd_tested() {
@@ -568,6 +675,13 @@ tail_of() {
 # result: lang-bot.sh upstream), none when it failed for another reason
 upstream_of() { cat "$1/results/$2/upstream" 2>/dev/null || true; }
 
+# push_main — HEAD onto main as a fast-forward, never forced: the bot's one push
+push_main() {
+  local rc=0
+  git push -q origin HEAD:refs/heads/main || rc=$?
+  return "$rc"
+}
+
 # changes — the lines the diff on stdin changes, each with its file, sorted: what a bump changed,
 # whatever the lines around it
 changes() {
@@ -591,63 +705,159 @@ bump_again() {
 }
 
 cmd_land() {
-  local dir="${1:?usage: lang-bot.sh land DIR RUN_URL}" run_url="${2:?}" n i test issue runtime full rc log
+  local dir="${1:?usage: lang-bot.sh land DIR RUN_URL}" run_url="${2:?}" n i entry issue name rc log what list
   mkdir -p "$dir/comments" "$dir/actions.d" "$dir/bot"
   : > "$dir/actions"
   : > "$dir/publish.list"
+  [ -f "$dir/tests.json" ] || echo '[]' > "$dir/tests.json"
+  [ -f "$dir/archive.json" ] || echo '[]' > "$dir/archive.json"
   # the bot as it started: the checkout moves along main while it lands
   cp "${BASH_SOURCE[0]}" "$dir/bot/lang-bot.sh"
   export LANG_BOT_ROOT="$ROOT" LANG_BOT_SELF="$dir/bot/lang-bot.sh"
-  n="$(jq length "$dir/tests.json")"
-  for ((i = 0; i < n; i++)); do
-    test="$(jq -c ".[$i]" "$dir/tests.json")"
-    issue="$(jq -r .issue <<< "$test")"; runtime="$(jq -r .runtime <<< "$test")"; full="$(jq -r .full <<< "$test")"
-    log="$dir/land-${i}.log"
-    rm -f -- "$dir/actions.d/${i}"
-    rc=0
-    bash "$LANG_BOT_SELF" land-one "$dir" "$i" "$run_url" > "$log" 2>&1 || rc=$?
-    cat "$log"
-    if [ "$rc" = 0 ] && [ -f "$dir/actions.d/${i}" ]; then
-      # its issue's actions now; its images join the one publish after the loop
-      grep -v $'^publish\t' "$dir/actions.d/${i}" >> "$dir/actions" || true
-      sed -n $'s/^publish\t//p' "$dir/actions.d/${i}" | tr ',' '\n' >> "$dir/publish.list"
-      continue
-    fi
-    # it failed in the middle: the issue hears of it, the checkout is clean for the next one
-    git reset -q --hard 2>/dev/null || true
-    git clean -fdq 2>/dev/null || true
-    {
-      echo "**Needs attention: the bot could not land ${runtime} ${full}** (\`ci/lang-bot.sh land\`, exit ${rc}). Nothing of it was committed; the other tests of the run were landed and reported."
-      echo ""
-      echo '```'
-      tail -n 30 "$log"
-      echo '```'
-      echo ""
-      echo "Run: ${run_url}. Fix the bot (or land it by hand), then run **Actions → Language tests → Run workflow** with this issue's number."
-    } > "$dir/comments/${issue}.md"
-    printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$ATTENTION_LABEL" "$issue" "$dir/comments/${issue}.md" >> "$dir/actions"
+  # the green tests first, then the versions past their end of life, each in a process of its own
+  for what in land archive; do
+    list="$dir/tests.json"
+    [ "$what" = land ] || list="$dir/archive.json"
+    n="$(jq length "$list")"
+    for ((i = 0; i < n; i++)); do
+      entry="$(jq -c ".[$i]" "$list")"
+      issue="$(jq -r .issue <<< "$entry")"
+      name="$(jq -r '"\(.runtime) \(.full // .version)"' <<< "$entry")"
+      log="$dir/${what}-${i}.log"
+      rm -f -- "$dir/actions.d/${what}-${i}"
+      rc=0
+      bash "$LANG_BOT_SELF" "${what}-one" "$dir" "$i" "$run_url" > "$log" 2>&1 || rc=$?
+      cat "$log"
+      if [ "$rc" = 0 ] && [ -f "$dir/actions.d/${what}-${i}" ]; then
+        # its issue's actions now; its images join the one publish after the loop
+        grep -v $'^publish\t' "$dir/actions.d/${what}-${i}" >> "$dir/actions" || true
+        sed -n $'s/^publish\t//p' "$dir/actions.d/${what}-${i}" | tr ',' '\n' >> "$dir/publish.list"
+        continue
+      fi
+      # it failed in the middle: the issue hears of it, the checkout is clean for the next one
+      git reset -q --hard 2>/dev/null || true
+      git clean -fdq 2>/dev/null || true
+      {
+        echo "**Needs attention: the bot could not $([ "$what" = land ] && echo land || echo archive) ${name}** (\`ci/lang-bot.sh ${what}\`, exit ${rc}). Nothing of it was committed; the other issues of the run were handled and reported."
+        echo ""
+        echo '```'
+        tail -n 30 "$log"
+        echo '```'
+        echo ""
+        echo "Run: ${run_url}. Fix the bot (or do it by hand), then run **Actions → Language tests → Run workflow** with this issue's number."
+      } > "$dir/comments/${issue}.md"
+      printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$ATTENTION_LABEL" "$issue" "$dir/comments/${issue}.md" >> "$dir/actions"
+    done
   done
-  # one publish for main as the run left it, with every image a landed test touched (the publish
-  # workflow's concurrency would cancel or queue one dispatch per test of the same commit)
+  # one publish for main as the run left it, with every image a landed test (or an archive) touched:
+  # the publish workflow's concurrency would cancel or queue one dispatch per test of the same commit
   local images
   images="$(awk 'NF && !seen[$0]++' "$dir/publish.list" 2>/dev/null | paste -sd , -)"
   [ -z "$images" ] || printf 'publish\t%s\n' "$images" >> "$dir/actions"
 }
 
+# archive-one DIR INDEX RUN_URL — the archive of one version of DIR/archive.json past its end of
+# life (cmd_land runs it), its actions in DIR/actions.d/archive-INDEX: the registry first (the image
+# as eol-<version>, the floating tag gone: eol_archive_image of lib/eol.sh, or LANG_ARCHIVE_IMAGE,
+# a command the tests answer with), then the records on main (archive), the issue closed
+cmd_archive_one() {
+  local dir="${1:?usage: lang-bot.sh archive-one DIR INDEX RUN_URL}" i="${2:?}" run_url="${3:?}"
+  local entry issue runtime version eol digest actions comment sha body patches repo
+  entry="$(jq -c ".[$i]" "$dir/archive.json")"
+  issue="$(jq -r .issue <<< "$entry")"; runtime="$(jq -r .runtime <<< "$entry")"
+  version="$(jq -r .version <<< "$entry")"; eol="$(jq -r .eol <<< "$entry")"
+  actions="$dir/actions.d/archive-${i}"
+  comment="$dir/comments/${issue}.md"
+  repo="${REGISTRY}/exec-${runtime}"
+  : > "$actions.tmp"
+
+  # the registry: the image the floating tag named, kept as eol-<version>; the floating tag gone
+  if [ -n "${LANG_ARCHIVE_IMAGE:-}" ]; then
+    digest="$($LANG_ARCHIVE_IMAGE "$runtime" "$version")"
+  else
+    # shellcheck source=../lib/registry.sh
+    source "${ROOT}/lib/registry.sh"
+    # shellcheck source=../lib/eol.sh
+    source "${ROOT}/lib/eol.sh"
+    digest="$(eol_archive_image "$runtime" "$version")"
+  fi
+  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "the registry named no digest (${digest:-none})" >&2; return 1; }
+  patches="$(crane ls "$repo" 2>/dev/null | grep -E "^${version//./\\.}\.[0-9A-Za-z.]*-r[0-9]+$" | sort -V | paste -sd ' ' - || true)"
+
+  # the records on main: archived-versions, tested-versions, the lifecycle, a fixed release
+  git fetch -q origin main
+  git reset -q --hard
+  git checkout -q --detach origin/main
+  bash "$LANG_BOT_SELF" archive "$runtime" "$version" "$eol" "$digest"
+  git add -A -- "runtimes/${runtime}"
+  if git diff --cached --quiet; then
+    echo "**Archived: ${runtime} ${version}** was archived already: \`${repo}:${ARCHIVE_TAG_PREFIX}${version}\` is ${digest}, and main has its records (${run_url})." > "$comment"
+    printf 'comment\t%s\t%s\nclose\t%s\n' "$issue" "$comment" "$issue" >> "$actions.tmp"
+    mv "$actions.tmp" "$actions"
+    return 0
+  fi
+  body="${runtime} ${version} reached its end of life on ${eol}. The image its floating tag named, ${digest}, stays as ${repo}:${ARCHIVE_TAG_PREFIX}${version} with its patch tags; the floating tag ${version} is gone, so RunR's discovery no longer offers the version (its projects keep it, locked as end-of-life; running deployments keep their image by digest). Recorded in runtimes/${runtime}/archived-versions, out of tested-versions, and its end of life in versionDiscovery.lifecycle: ${run_url}."
+  body="$(fold -s -w 98 <<< "${body}" | sed 's/ *$//')"
+  GIT_AUTHOR_NAME="${LANG_BOT_NAME:?}" GIT_AUTHOR_EMAIL="${LANG_BOT_EMAIL:?}" GIT_COMMITTER_NAME="$LANG_BOT_NAME" GIT_COMMITTER_EMAIL="$LANG_BOT_EMAIL" \
+    git commit -q -F - <<EOF
+chore(${runtime}): ${runtime} ${version} archived, end of life ${eol}
+
+${body}
+
+${LANG_TRAILER}: ${runtime} ${version}
+EOF
+  # a fast-forward of main, never forced
+  if ! push_main; then
+    echo "**${runtime} ${version} is archived in the registry (\`${repo}:${ARCHIVE_TAG_PREFIX}${version}\`, ${digest}), but main moved while the bot recorded it.** The next run records it (${run_url})." > "$comment"
+    printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
+    mv "$actions.tmp" "$actions"
+    return 0
+  fi
+  sha="$(git rev-parse HEAD)"
+  {
+    echo "**Archived: ${runtime} ${version}** (end of life ${eol}). Nothing more to do here."
+    echo ""
+    echo "- the image: \`${repo}:${ARCHIVE_TAG_PREFIX}${version}\` is ${digest}, the image \`${repo}:${version}\` named${patches:+; its patch tags stay (${patches// /, })}"
+    echo "- the floating tag \`${version}\` is gone: RunR's \`executor:sync\` no longer offers the version (it leaves the picker, as after its end of life already); its projects keep it, locked as end-of-life, and running deployments keep their image by digest"
+    echo "- main ${sha}: \`runtimes/${runtime}/archived-versions\`, out of \`tested-versions\`, its end of life in \`versionDiscovery.lifecycle\` of \`runtime.yaml\`; the build and the watch leave it out"
+    echo "- the publish run the bot starts drops its patches from the signed patch feed and publishes the runtime catalog"
+    echo ""
+    echo "Run: ${run_url}."
+  } > "$comment"
+  printf 'comment\t%s\t%s\nclose\t%s\npublish\t%s\n' "$issue" "$comment" "$issue" "$runtime" >> "$actions.tmp"
+  mv "$actions.tmp" "$actions"
+}
+
 # land-one DIR INDEX RUN_URL — the landing of one test of DIR/tests.json (cmd_land runs it), its
-# actions in DIR/actions.d/INDEX
+# actions in DIR/actions.d/land-INDEX
 cmd_land_one() {
   local dir="${1:?usage: lang-bot.sh land-one DIR INDEX RUN_URL}" i="${2:?}" run_url="${3:?}" test issue kind runtime version full key build
   local tested comment name subject sha pins rc suite suites failed paths images publish lines note body older deprecated outage retest
   local actions patch foreign again
   test="$(jq -c ".[$i]" "$dir/tests.json")"
-  actions="$dir/actions.d/${i}"
+  actions="$dir/actions.d/land-${i}"
   : > "$actions.tmp"
   issue="$(jq -r .issue <<< "$test")"; kind="$(jq -r .kind <<< "$test")"; runtime="$(jq -r .runtime <<< "$test")"
   version="$(jq -r .version <<< "$test")"; full="$(jq -r .full <<< "$test")"; key="$(jq -r .key <<< "$test")"
   suites="$(jq -r '.suites // [] | join(" ")' <<< "$test")"
   comment="$dir/comments/${issue}.md"
   build="$(status "$dir" "lang-result-${key}-build")"
+  # held by its bump (an ML release without a wheel for the -gpu image's CUDA, ml-bump exit 4):
+  # closed, nobody asked, the pins stay; a newer release with the wheel is a new issue
+  if [ "$build" = held ]; then
+    note="$(head -n 1 "$dir/results/lang-result-${key}-build/held" 2>/dev/null || true)"
+    {
+      echo "**Held: ${runtime} ${full}** — ${note:-held by its bump}."
+      echo ""
+      echo "Nothing was published or committed, and nobody needs to act: the CPU and GPU images stay on their pin together. The bot keeps watching: a newer release, or a newer patch of the current version, that has the wheel is bumped and tested as usual."
+      echo ""
+      echo "Run: ${run_url}."
+    } > "$comment"
+    printf 'comment\t%s\t%s\nclose\t%s\tnot planned\n' "$issue" "$comment" "$issue" >> "$actions.tmp"
+    [ "$(jq -r '.outage // false' <<< "$test")" != true ] || printf 'unlabel\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" >> "$actions.tmp"
+    mv "$actions.tmp" "$actions"
+    return 0
+  fi
   # every result: "build" and one per RunR suite; a suite RunR's release does not have yet is skipped
   failed=""
   [ "$build" = success ] || failed="build"
@@ -849,7 +1059,7 @@ ${LANG_TRAILER}: ${runtime} ${full}
 EOF
   # a fast-forward of main, never forced; a main that moved meanwhile is left as it is
   rc=0
-  git push -q origin HEAD:refs/heads/main || rc=$?
+  push_main || rc=$?
   if [ "$rc" != 0 ]; then
     echo "**${runtime} ${full} passed, but main moved while the bot committed it.** Nothing was pushed: the next run tests it again (${run_url})." > "$comment"
     printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
@@ -883,6 +1093,8 @@ case "$command" in
   wasm-bump) cmd_wasm_bump "$@" ;;
   tool-bump) cmd_tool_bump "$@" ;;
   tested) cmd_tested "$@" ;;
+  archive) cmd_archive "$@" ;;
+  archive-one) cmd_archive_one "$@" ;;
   lifecycle) cmd_lifecycle "$@" ;;
   catalog) cmd_catalog "$@" ;;
   check-e2e) cmd_check_e2e "$@" ;;

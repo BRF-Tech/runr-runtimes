@@ -22,14 +22,14 @@ show it private, set it to public there.
 
 | Package | Image | Workflow |
 |---------|-------|----------|
-| `runr/exec-python` | `ghcr.io/brf-tech/runr/exec-python` | publish, patch (Admin role: see below) |
-| `runr/exec-nodejs` | `ghcr.io/brf-tech/runr/exec-nodejs` | publish, patch (Admin role: see below) |
-| `runr/exec-go` | `ghcr.io/brf-tech/runr/exec-go` | publish, patch (Admin role: see below) |
-| `runr/exec-php` | `ghcr.io/brf-tech/runr/exec-php` | publish, patch (Admin role: see below) |
-| `runr/exec-java` | `ghcr.io/brf-tech/runr/exec-java` | publish, patch (Admin role: see below) |
-| `runr/exec-dotnet` | `ghcr.io/brf-tech/runr/exec-dotnet` | publish, patch (Admin role: see below) |
-| `runr/exec-ruby` | `ghcr.io/brf-tech/runr/exec-ruby` | publish, patch (Admin role: see below) |
-| `runr/exec-bun` | `ghcr.io/brf-tech/runr/exec-bun` | publish, patch (Admin role: see below) |
+| `runr/exec-python` | `ghcr.io/brf-tech/runr/exec-python` | publish, patch, the language bot's archive (Admin role: see below) |
+| `runr/exec-nodejs` | `ghcr.io/brf-tech/runr/exec-nodejs` | publish, patch, the language bot's archive (Admin role: see below) |
+| `runr/exec-go` | `ghcr.io/brf-tech/runr/exec-go` | publish, patch, the language bot's archive (Admin role: see below) |
+| `runr/exec-php` | `ghcr.io/brf-tech/runr/exec-php` | publish, patch, the language bot's archive (Admin role: see below) |
+| `runr/exec-java` | `ghcr.io/brf-tech/runr/exec-java` | publish, patch, the language bot's archive (Admin role: see below) |
+| `runr/exec-dotnet` | `ghcr.io/brf-tech/runr/exec-dotnet` | publish, patch, the language bot's archive (Admin role: see below) |
+| `runr/exec-ruby` | `ghcr.io/brf-tech/runr/exec-ruby` | publish, patch, the language bot's archive (Admin role: see below) |
+| `runr/exec-bun` | `ghcr.io/brf-tech/runr/exec-bun` | publish, patch, the language bot's archive (Admin role: see below) |
 | `runr/exec-pytorch` | `ghcr.io/brf-tech/runr/exec-pytorch` | publish (CPU), heavy (`-gpu`) |
 | `runr/exec-tensorflow` | `ghcr.io/brf-tech/runr/exec-tensorflow` | publish (CPU), heavy (`-gpu`) |
 | `runr/exec-wasm-rust` | `ghcr.io/brf-tech/runr/exec-wasm-rust` | publish |
@@ -50,15 +50,19 @@ WebAssembly toolchain (`runr/candidates/exec-wasm-exec`, `-wasm-go`, `-wasm-js`,
 versions in that namespace.
 Its tags are test artifacts: they may be deleted at any time.
 
-`ci.sh eol --prune` deletes end-of-life `exec-*` versions through the GitHub Packages API. It needs
-a token that may delete package versions (`GHCR_TOKEN`); it is not part of a workflow.
+An end-of-life `exec-*` version is archived, never deleted: the language bot's land job (and by
+hand `ci.sh eol --archive`) tags its image `eol-<major.minor>` and removes its floating tag through
+the GitHub Packages API (the tag moves onto an empty image, whose package version is deleted). It
+needs a token that may delete package versions: the workflow's `GITHUB_TOKEN` with the Admin role
+below, or `GHCR_TOKEN` by hand.
 
 ### Patch tags: the Admin role on the language runtimes
 
 The language runtimes are published as patches: every build that changed gets an immutable tag
 `<full version>-r<n>` (README.md, "Patches and the patch feed"). The feed jobs of the publish,
 patch and platform-release workflows delete the patch tags beyond the newest five of each version,
-through the GitHub Packages API with the workflow's `GITHUB_TOKEN`. A workflow token may delete
+and the language bot removes the floating tag of a version it archives, through the GitHub
+Packages API with the workflow's `GITHUB_TOKEN`. A workflow token may delete
 versions of a package only when the repository has the **Admin** role on it, so these eight
 packages need, once, instead of Write (the last four are created by the publish workflow, linked
 to this repository: check their Manage Actions access after the first publish):

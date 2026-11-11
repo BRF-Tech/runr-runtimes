@@ -2,7 +2,8 @@
 # Tests `ci.sh eol` without network: curl is a shell function that answers like GHCR (token
 # service, paginated tags/list, the GitHub Packages API) and endoflife.date, and records every
 # URL and header it is asked for. The EOL report reads the registry the exec-* images are pushed
-# to (ghcr.io/brf-tech/runr), never Docker Hub.
+# to (ghcr.io/brf-tech/runr), never Docker Hub. The archive of an EOL version (eol_archive_image)
+# runs against a registry that keeps its tags in a file: crane and the Packages API as functions.
 #
 #   bash test/eol_test.sh
 set -euo pipefail
@@ -94,23 +95,98 @@ echo "$out" | grep -q 'latest' && fail "non-version tag reported"
 echo "$out" | grep -q 'Supported: 2' || fail "supported count: $out"
 echo "$out" | grep -q 'EOL: 2' || fail "EOL count: $out"
 
-# --- prune ---------------------------------------------------------------------------------
+# --- archive -------------------------------------------------------------------------------
+# A registry that keeps state: $reg holds "<repo> <tag> <digest>" lines; crane reads and moves the
+# tags, the GitHub Packages API lists one package version per digest and deletes it with its tags
 if command -v jq >/dev/null 2>&1; then
-  : > "$urls"
-  out=$(GHCR_TOKEN=test-token cmd_eol --prune --yes 2>&1) || fail "prune failed: $out"
+  reg="$tmp/registry"
+  old="sha256:$(printf 'a%.0s' {1..64})"
+  printf '%s\n' "exec-python 3.8 ${old}" "exec-python 3.8.20-r1 ${old}" "exec-python 3.8.19-r1 sha256:$(printf 'c%.0s' {1..64})" \
+    "exec-python 3.12 sha256:$(printf 'd%.0s' {1..64})" > "$reg"
+  # repo_tag REF — "<repo> <tag>" of ghcr.io/brf-tech/runr/<repo>:<tag>
+  repo_tag() { local r="${1#ghcr.io/brf-tech/runr/}"; echo "${r%%:*} ${r#*:}"; }
+  crane() {
+    echo "crane $*" >> "$urls"
+    local repo tag
+    case "$1" in
+      digest)
+        if [[ "$2" == *@sha256:* ]]; then echo "${2#*@}"; return 0; fi
+        read -r repo tag <<< "$(repo_tag "$2")"
+        awk -v r="$repo" -v t="$tag" '$1 == r && $2 == t { print $3; f = 1 } END { exit !f }' "$reg" ;;
+      tag)
+        repo="${2#ghcr.io/brf-tech/runr/}"
+        [ "${fail_tag:-}" != "$3" ] || return 1
+        awk -v r="${repo%%@*}" -v t="$3" '!($1 == r && $2 == t)' "$reg" > "$reg.new" && mv "$reg.new" "$reg"
+        echo "${repo%%@*} $3 ${repo#*@}" >> "$reg" ;;
+      append)
+        read -r repo tag <<< "$(repo_tag "$5")"
+        [ "$2" = -f ] && [ -f "$3" ] || return 1
+        awk -v r="$repo" -v t="$tag" '!($1 == r && $2 == t)' "$reg" > "$reg.new" && mv "$reg.new" "$reg"
+        echo "${repo} ${tag} sha256:$(printf 'e%.0s' {1..64})" >> "$reg" ;;
+      *) return 1 ;;
+    esac
+  }
+  curl() {
+    local url="" method="GET"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -X) method="$2"; shift ;;
+        -H|-o|-w|-u|-d|-D) shift ;;
+        http*) url="$1" ;;
+      esac
+      shift
+    done
+    echo "${method} ${url}" >> "$urls"
+    local base="https://api.github.com/orgs/brf-tech/packages/container/runr%2Fexec-python/versions"
+    case "${method} ${url}" in
+      "GET ${base}?per_page=100&page=1")
+        awk '$1 == "exec-python" { print $3, $2 }' "$reg" | jq -Rn '[inputs | split(" ") | {d: .[0], t: .[1]}] | group_by(.d)
+          | map({id: (.[0].d | .[7:15]), metadata: {container: {tags: map(.t)}}})' ;;
+      "GET ${base}?per_page=100&page="*) echo '[]' ;;
+      "DELETE ${base}/"*)
+        [ "${fail_delete:-0}" = 0 ] || { echo 500; return 0; }
+        awk -v id="${url##*/}" '!(substr($3, 8, 8) == id)' "$reg" > "$reg.new" && mv "$reg.new" "$reg"
+        echo 204 ;;
+      *) return 22 ;;
+    esac
+  }
+  export EOL_ARCHIVE_WAIT=0
+  REGISTRY="ghcr.io/brf-tech/runr"
+  tags_of() { awk -v r="$1" -v d="$2" '$1 == r && $3 == d { print $2 }' "$reg" | sort | paste -sd ' ' -; }
 
-  grep -qx 'DELETE https://api.github.com/orgs/brf-tech/packages/container/runr%2Fexec-python/versions/11' "$urls" || fail "EOL version 3.8 not deleted"
-  grep -q 'DELETE .*/versions/12' "$urls" && fail "a supported version was deleted"
-  grep -q 'DELETE .*runr%2Fexec-go/' "$urls" && fail "a version that carries a non-EOL tag was deleted"
-  echo "$out" | grep -q 'kept (the image is also tagged 1.22.5)' || fail "kept version not reported: $out"
-  grep -qx 'Authorization: Bearer test-token' "$sent" || fail "GitHub API not called with GHCR_TOKEN"
+  : > "$urls"
+  out="$(GHCR_TOKEN=test-token eol_archive_image python 3.8 2>"$tmp/err")" || fail "archive: $(cat "$tmp/err")"
+  [ "$out" = "$old" ] || fail "the archived digest: ${out}"
+  [ "$(tags_of exec-python "$old")" = "3.8.20-r1 eol-3.8" ] || fail "the archived image's tags: $(cat "$reg")"
+  grep -q '^exec-python 3.8 ' "$reg" && fail "the floating tag stayed: $(cat "$reg")"
+  grep -q "^exec-python 3.8.19-r1 " "$reg" && grep -q '^exec-python 3.12 ' "$reg" || fail "another tag went: $(cat "$reg")"
+  grep -q 'DELETE .*/versions/eeeeeeee$' "$urls" || fail "the empty image's package version was not deleted: $(cat "$urls")"
+  grep -q "DELETE .*/versions/aaaaaaaa" "$urls" && fail "the archived image was deleted"
+  # again: archived already, nothing changes
+  cp "$reg" "$tmp/reg.before"
+  out="$(GHCR_TOKEN=test-token eol_archive_image python 3.8 2>"$tmp/err")" || fail "archive again: $(cat "$tmp/err")"
+  [ "$out" = "$old" ] && cmp -s "$reg" "$tmp/reg.before" && grep -qF 'archived already' "$tmp/err" || fail "archive again: ${out} $(cat "$tmp/err")"
+  # the package version cannot be deleted: the floating tag goes back to the image, the run fails
+  echo "exec-python 3.13 sha256:$(printf 'f%.0s' {1..64})" >> "$reg"
+  fail_delete=1
+  out="$(GHCR_TOKEN=test-token eol_archive_image python 3.13 2>"$tmp/err")" && fail "a failed deletion passed: ${out}"
+  [ "$(tags_of exec-python "sha256:$(printf 'f%.0s' {1..64})")" = "3.13 eol-3.13" ] || fail "the floating tag was not put back: $(cat "$reg")"
+  fail_delete=0
+  # nothing to archive: no such tag
+  GHCR_TOKEN=test-token eol_archive_image python 3.7 >/dev/null 2>&1 && fail "archive of a version the registry lacks"
+  # ci.sh eol --archive: the EOL versions of the report (--prune is its former name)
+  printf '%s\n' "exec-python 3.8 ${old}" "exec-python 3.8.20-r1 ${old}" "exec-python 3.12 sha256:$(printf 'd%.0s' {1..64})" > "$reg"
+  out="$(GHCR_TOKEN=test-token archive_eol_tags 1 exec-python:3.8 2>&1)" || fail "archive_eol_tags: ${out}"
+  grep -qF "ghcr.io/brf-tech/runr/exec-python:eol-3.8 (${old})" <<<"$out" && ! grep -q '^exec-python 3.8 ' "$reg" || fail "archive_eol_tags: ${out} $(cat "$reg")"
+  unset -f crane curl
+  echo "ok - archive: the image kept as eol-<version> with its patch tags, the floating tag gone (moved onto an empty image whose package version goes), again nothing, a failure puts the tag back"
 else
-  echo "skip: prune (jq not installed)"
+  echo "skip: archive (jq not installed)"
 fi
 
-# --- prune needs GHCR -------------------------------------------------------------------------
+# --- the archive needs GHCR -------------------------------------------------------------------
 REGISTRY="registry.example.com/runr"
-out=$( (GHCR_TOKEN=x prune_eol_tags 1 "exec-python:3.8") 2>&1) && fail "prune outside GHCR did not fail"
-echo "$out" | grep -q 'supports GHCR' || fail "prune outside GHCR: $out"
+out=$( (GHCR_TOKEN=x archive_eol_tags 1 "exec-python:3.8") 2>&1) && fail "archive outside GHCR did not fail"
+echo "$out" | grep -q 'supports GHCR' || fail "archive outside GHCR: $out"
 
 echo "ok: eol"

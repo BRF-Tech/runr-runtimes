@@ -144,6 +144,11 @@ def feed_merge($results; $found; $platform; $now; $keep; $pkeep):
       | map(normalize_platform)) as $releases
   | {schema: 1, generated_at: $now, patches: $patches, platform: $releases};
 
+# the feed (input) without the patches of the versions the language bot archived ($archived:
+# [{runtime, version}], runtimes/<runtime>/archived-versions): an archived version is no current one
+def without_archived($archived):
+  .patches |= map(. as $p | select($archived | any(.runtime == $p.runtime and .version == $p.version) | not));
+
 # what the schema cannot check (input: a feed), one message per problem
 def feed_problems($keep; $pkeep):
   [ (.patches // [] | group_by(.id)[] | select(length > 1) | "duplicate patch id \(.[0].id)"),

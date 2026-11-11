@@ -5,7 +5,8 @@
 # promotions of unchanged images, platform releases, the newest 5 / 10), the feed against
 # schema/patch-feed.v1.json and its rules, pulling the feed (registry API answers of curl),
 # publishing it (oras and cosign are shell functions that record their calls: candidate, signed by
-# digest, verified, then tagged), a whole update with retention through the GitHub Packages API,
+# digest, verified, then tagged), a whole update with retention through the GitHub Packages API
+# (none of an archived version's patches in the feed, all its patch tags kept),
 # and ci.sh feed platform. Needs jq; the schema checks need check-jsonschema or python3 with
 # jsonschema (skipped without one).
 #
@@ -378,6 +379,22 @@ grep -q "signature verified with the previous key" "$tmp/out" || fail "a key rot
 previous_key=""
 verify_ok=1
 echo "ok - feed_update: the registry's patches added, the newest five, signed and published, retention through the Packages API"
+
+# a version the language bot archived (runtimes/<runtime>/archived-versions): no patch of it in the
+# feed, its patch tags all stay (its history)
+[ "$(fjq '{patches: [$a, $b]} | without_archived([{runtime: "php", version: "8.3"}]) | .patches | map(.id) | join(" ")' -r \
+  --argjson a "$(entry php 8.3 8.3.36-r1 2026-10-21T10:00:00Z)" --argjson b "$(entry php 8.4 8.4.27-r1 2026-10-21T10:00:00Z)")" = "php-8.4-8.4.27-r1" ] \
+  || fail "without_archived"
+archived_dir="$(mktemp -d)"
+mkdir -p "$archived_dir/php"
+echo "8.3 2026-10-01 sha256:$(printf '0%.0s' {1..64})" > "$archived_dir/php/archived-versions"
+: > "$curl_calls"
+RUNTIMES_DIR="$archived_dir" feed_update 0 "" "$tmp/archived.json" > "$tmp/out" 2>&1 || fail "feed_update with an archived version: $(cat "$tmp/out")"
+[ "$(jq '[.patches[] | select(.runtime == "php" and .version == "8.3")] | length' "$tmp/archived.json")" = 0 ] || fail "an archived version's patches in the feed: $(jq -c '.patches | map(.id)' "$tmp/archived.json")"
+grep -q 'retention would delete ghcr.io/brf-tech/runr/exec-php' "$tmp/out" && fail "retention would delete an archived version's patch tags: $(cat "$tmp/out")"
+rm -f -- "$archived_dir/php/archived-versions"
+rmdir -- "$archived_dir/php" "$archived_dir"
+echo "ok - an archived version: none of its patches in the feed, all its patch tags kept"
 
 # an unchanged feed is not published again
 printf '%s' "$(jq -c '.generated_at = "2026-10-21T00:00:00Z"' "$tmp/dry.json")" > "$tmp/blob"

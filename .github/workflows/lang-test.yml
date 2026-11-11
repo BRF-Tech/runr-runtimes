@@ -8,7 +8,9 @@
 #     the SHA-512 of its download), every version of the image built and smoke-tested, this
 #     repository's tests, then RunR's main e2e on the newest version;
 #   - an ML runtime (pytorch, tensorflow): the framework pin moved, the CPU image built and
-#     smoke-tested, this repository's tests, then RunR's main e2e with its ML case (--ml) on it;
+#     smoke-tested, this repository's tests, then RunR's main e2e with its ML case (--ml) on it; a
+#     torch without a wheel for the -gpu image's CUDA is held: its issue closed, nobody asked, the
+#     CPU and GPU images stay on their pin together;
 #   - a WebAssembly toolchain (spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk,
 #     rust): its ARG and download checksums moved (rust, tinygo: their mirrored base image too),
 #     the images that have it built and smoke-tested, this repository's tests, then RunR's suites
@@ -27,8 +29,14 @@
 # hit the registry inside its Kind cluster) runs once more, and a test that failed on one alone is
 # labelled "lang: upstream outage" and tested again by the next run (a second outage in a row:
 # "needs attention"). Several green tests land one after the other on the moving main
-# (ci/lang-bot.sh land), each commit with the trailer "RunR-Lang-Bot: <name> <version>". RunR is
-# its public last release: nothing of RunR's private repository is read or written.
+# (ci/lang-bot.sh land), each commit with the trailer "RunR-Lang-Bot: <name> <version>", and the
+# publish workflow starts once for all of them. An open "lang: <runtime> <X.Y> end of life <date>"
+# whose date is past is archived by the land job, nobody asked: the image the floating tag named
+# stays as exec-<runtime>:eol-<X.Y> with its patch tags, the floating tag goes (RunR no longer
+# offers the version; its projects stay locked as end-of-life, running deployments keep their
+# image by digest), the records go onto main (runtimes/<runtime>/archived-versions) and the issue
+# is closed. RunR is its public last release: nothing of RunR's private repository is read or
+# written.
 name: Language tests
 
 on:
@@ -70,6 +78,8 @@ jobs:
       e2e: ${{ steps.plan.outputs.e2e }}
       any: ${{ steps.plan.outputs.any }}
       any-e2e: ${{ steps.plan.outputs.any-e2e }}
+      archive: ${{ steps.plan.outputs.archive }}
+      any-archive: ${{ steps.plan.outputs.any-archive }}
       runr-tag: ${{ steps.plan.outputs.runr-tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,6 +107,9 @@ jobs:
             echo "e2e=${e2e}"
             echo "any=$(jq -r '.tests | length > 0' "$RUNNER_TEMP/plan.json")"
             echo "any-e2e=$(jq -r 'length > 0' <<< "$e2e")"
+            # the versions past their end of life the land job archives
+            echo "archive=$(jq -c .archive "$RUNNER_TEMP/plan.json")"
+            echo "any-archive=$(jq -r '.archive | length > 0' "$RUNNER_TEMP/plan.json")"
             echo "runr-tag=${tag}"
           } >> "$GITHUB_OUTPUT"
       # the labels (created once), superseded issues closed, re-triggered ones unlabelled
@@ -214,14 +227,23 @@ jobs:
           echo "$image" > "$RUNNER_TEMP/result/images"
           echo "$image" > "$RUNNER_TEMP/result/runtime"
           echo "$version" > "$RUNNER_TEMP/result/version"
-      # an ML framework: the pin moved, the CPU image built, smoke-tested and pushed as the candidate
+      # an ML framework: the pin moved, the CPU image built, smoke-tested and pushed as the candidate.
+      # A release without a wheel for the -gpu image's CUDA is held (ml-bump exit 4): nothing built,
+      # the land closes its issue, the CPU and GPU images stay on their pin together
       - name: Move the pin, build, smoke test and push the candidate (ML)
         if: matrix.kind == 'ml'
         run: |
           exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/result"
-          bash ci/lang-bot.sh ml-bump "$RUNTIME" "$FULL" | tee "$RUNNER_TEMP/result/pin"
+          rc=0
+          bash ci/lang-bot.sh ml-bump "$RUNTIME" "$FULL" > "$RUNNER_TEMP/result/pin" 2> "$RUNNER_TEMP/bump.err" || rc=$?
+          cat "$RUNNER_TEMP/result/pin" "$RUNNER_TEMP/bump.err"
+          if [ "$rc" = 4 ]; then
+            cp "$RUNNER_TEMP/bump.err" "$RUNNER_TEMP/result/held"
+            exit 0
+          fi
+          [ "$rc" = 0 ] || exit "$rc"
           git diff > "$RUNNER_TEMP/result/pin.patch"
           ./ci.sh ml-runtimes "$RUNTIME" cpu
           image="${CANDIDATES}/exec-${RUNTIME}:${FULL}"
@@ -259,6 +281,8 @@ jobs:
       - name: Shell tests, Dockerfile and reqs mirror checks
         run: |
           exec > >(tee -a "$RUNNER_TEMP/build.log") 2>&1
+          # a held bump built nothing to test
+          [ ! -f "$RUNNER_TEMP/result/held" ] || exit 0
           for t in test/*_test.sh; do echo "── $t"; bash "$t" || exit 1; done
           bash ci/check-dockerfiles.sh
           bash ci/check-reqs-mirror.sh
@@ -271,6 +295,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/result"
           echo "$JOB_STATUS" > "$RUNNER_TEMP/result/status"
+          if [ "$JOB_STATUS" = success ] && [ -f "$RUNNER_TEMP/result/held" ]; then echo held > "$RUNNER_TEMP/result/status"; fi
           echo "$GITHUB_SHA" > "$RUNNER_TEMP/result/sha"
           tail -n 60 "$RUNNER_TEMP/build.log" > "$RUNNER_TEMP/result/tail.txt" 2>/dev/null || true
           if [ "$JOB_STATUS" != success ] && bash ci/lang-bot.sh upstream "$RUNNER_TEMP/build.log" > "$RUNNER_TEMP/result/upstream"; then
@@ -339,6 +364,13 @@ jobs:
           # every step up to the suite prints into e2e.log too: a red comment shows its end
           exec > >(tee -a "$RUNNER_TEMP/e2e.log") 2>&1
           mkdir -p "$RUNNER_TEMP/result"
+          # its bump held it (no wheel for the -gpu image's CUDA): nothing to deploy, nothing failed
+          if [ "$(cat "$RUNNER_TEMP/build/status")" = held ]; then
+            echo "skipped" > "$RUNNER_TEMP/result/status"
+            head -n 1 "$RUNNER_TEMP/build/held" > "$RUNNER_TEMP/result/reason"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "$(cat "$RUNNER_TEMP/build/status")" != success ]; then
             echo "the build failed: no candidate to deploy"
             exit 1
@@ -462,17 +494,23 @@ jobs:
           retention-days: 14
 
   land:
-    name: Commit green versions, report on the issues
+    name: Commit green versions, archive end-of-life ones, report on the issues
     needs: [plan, build, e2e]
-    if: ${{ always() && needs.plan.outputs.any == 'true' }}
+    if: ${{ always() && (needs.plan.outputs.any == 'true' || needs.plan.outputs.any-archive == 'true') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
-      # tested-versions and the pins onto main
+      # tested-versions, the pins and the archive records onto main
       contents: write
       issues: write
       # the publish workflow for a green image (a push of the GITHUB_TOKEN starts no workflow)
       actions: write
+      # an end-of-life version archived: its image tagged eol-<version>, its floating tag removed
+      # (the Admin role of this repository on the language runtimes' packages, PACKAGES.md)
+      packages: write
+    env:
+      CRANE_VERSION: v0.21.2
+      CRANE_SHA256: 897e7c342db072ba76531246fc18fbf3e8e298688b6ecf98916770984b263866
     steps:
       # the full history and the workflow's token for the one push, HEAD:refs/heads/main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -486,9 +524,22 @@ jobs:
           persist-credentials: false
           path: .runr-release
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.plan.outputs.any == 'true'
         with:
           pattern: lang-result-*
           path: ${{ runner.temp }}/lang/results
+      # the archive of an end-of-life version: crane, logged in to the registry
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: needs.plan.outputs.any-archive == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install crane (pinned, checksum verified)
+        if: needs.plan.outputs.any-archive == 'true'
+        run: |
+          bash ci/fetch.sh "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" /tmp/crane.tar.gz "${CRANE_SHA256}"
+          sudo tar -xzf /tmp/crane.tar.gz -C /usr/local/bin crane
       - name: What RunR pins
         env:
           TESTS: ${{ needs.plan.outputs.tests }}
@@ -515,10 +566,17 @@ jobs:
             cat "$RUNNER_TEMP/lang/pins/${runtime}"
           done
           rm -rf .runr-release
-      - name: Commit the green ones on main
+      # the green tests onto main, then the versions past their end of life archived (the registry,
+      # their records on main, the issue closed: ci/lang-bot.sh land, archive-one)
+      - name: Commit the green ones on main, archive the end-of-life ones
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash ci/lang-bot.sh land "$RUNNER_TEMP/lang" "$RUN_URL"
+          ARCHIVE: ${{ needs.plan.outputs.archive }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${ARCHIVE:-[]}" > "$RUNNER_TEMP/lang/archive.json"
+          bash ci/lang-bot.sh land "$RUNNER_TEMP/lang" "$RUN_URL"
       - name: Report on the issues
         if: always()
         env:
@@ -530,7 +588,7 @@ jobs:
               comment) gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body-file "$arg" ;;
               label) gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --add-label "$arg" ;;
               unlabel) gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --remove-label "$arg" ;;
-              close) gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason completed ;;
+              close) gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason "${arg:-completed}" ;;
               publish) gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref main -f images="$issue" ;;
             esac
           done < "$RUNNER_TEMP/lang/actions"

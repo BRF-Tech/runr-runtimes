@@ -18,8 +18,11 @@
 #   lang: <runtime> <X.Y> end of life <date>  a published version whose end of life
 #                                             (endoflife.date) is past or within WATCH_EOL_DAYS
 #                                             (default 60); the weekly build already stops
-#                                             building it once it is past. Checked whatever the
-#                                             upstream images answer
+#                                             building it once it is past, and the language bot
+#                                             archives it then (lang-test.yml: eol-<X.Y>, the
+#                                             floating tag gone, the issue closed). Checked
+#                                             whatever the upstream images answer; a version
+#                                             archived already is followed no more
 #   lang: <tool> <X.Y.Z> released             a tool a language image pins (WATCH_TOOL_DEFS: Maven
 #                                             and its dependency plugin in exec-java) newer than
 #                                             its ARG, in the pin's major line
@@ -316,6 +319,11 @@ watch_languages() {
     fi
 
     for minor in $minors; do
+      # a version the language bot archived (past its end of life) is followed no more
+      if is_archived "$runtime" "$minor"; then
+        echo -e "  ${GREEN}✓ ${minor}: archived (${REGISTRY}/exec-${runtime}:${ARCHIVE_TAG_PREFIX}${minor})${NC}"
+        continue
+      fi
       latest="$(grep -E "^${minor//./\\.}\.[0-9]+$" <<< "$upstream" | sort -V | tail -n 1 || true)"
       [ -n "$latest" ] || continue
       tested="$(patch_tested "$runtime" "$minor")"
@@ -383,9 +391,9 @@ Reported by ci.sh watch."
       watch_report "${runtime}-${minor}-eol" "lang: ${runtime} ${minor} end of life ${date}" \
 "${runtime} ${minor} $([ "$status" = eol ] && echo "reached its end of life on ${date}" || echo "reaches its end of life on ${date}, in ${days} days") (endoflife.date). \`${REGISTRY}/exec-${runtime}:${minor}\` is published.
 
-- The weekly build stops building it once that date is past; its published tags stay until \`ci.sh eol --prune\`.
-- RunR shows the date (\`executor:sync\` reads it from endoflife.date) and its e2e no longer deploys an end-of-life version.
-- [ ] Tell the users of ${runtime} ${minor} (RunR's console shows the date), and decide when to prune the tag.
+- RunR shows the date (\`executor:sync\` reads it from endoflife.date) and counts down to it in its reminders; after it, the version leaves the picker and its projects can no longer be saved or deployed (running deployments are never touched).
+- Once the date is past, the language bot (lang-test.yml) archives it by itself and closes this issue: the image stays as \`exec-${runtime}:${ARCHIVE_TAG_PREFIX}${minor}\` (with its patch tags), the floating tag \`${minor}\` goes, and the build, the patch feed and RunR's discovery leave the version out (\`runtimes/${runtime}/archived-versions\`).
+- Until then: tell the users of ${runtime} ${minor} if you want to, RunR's reminders already do.
 
 Reported by ci.sh watch."
     done

@@ -5,8 +5,8 @@
 # Checks that under the gate a routine build of an upstream version the floating tag does not run
 # is held (nothing pushed, the published patch stays) until runtimes/<runtime>/tested-versions
 # lists it, that a rebuild of the version a tag runs and a patch above routine are never held, that
-# without the gate nothing is held, and that --version builds that one version and refuses one
-# that is not current.
+# without the gate nothing is held, that --version builds that one version and refuses one that is
+# not current, and that a version the language bot archived is never built again.
 #
 #   bash test/gate_test.sh
 # shellcheck source-path=SCRIPTDIR
@@ -114,3 +114,15 @@ grep -qF 'php 8.1 is not a current version' "$tmp/out" || fail "not current: $(c
 flow php python --version=8.3 && fail "--version with two runtimes"
 flow php --version=8 && fail "--version=8"
 echo "ok - ci.sh build RUNTIME --version=X.Y builds that one version, reports its full version, refuses another"
+
+# a version the language bot archived (runtimes/<runtime>/archived-versions) is never built again,
+# whatever endoflife.date answers
+echo "8.2 2026-12-31 sha256:$(printf '0%.0s' {1..64})" > "$RUNTIMES_DIR/php/archived-versions"
+(
+  runtime_versions() { printf '8.2\n8.3\n8.4\n'; }
+  check_eol() { echo "supported|2099-01-01"; }
+  discover_language_versions php > "$tmp/out" 2>&1
+  [ "${DISCOVERED[php]}" = " 8.3 8.4" ] && grep -qF '8.2 (archived as eol-8.2: skipping build)' "$tmp/out"
+) || fail "an archived version was discovered: $(cat "$tmp/out")"
+rm -f -- "$RUNTIMES_DIR/php/archived-versions"
+echo "ok - an archived version is never built again"

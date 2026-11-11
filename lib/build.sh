@@ -92,8 +92,9 @@ push_built() {
 
 # discover_language_versions [RUNTIME...] — the versions of the language runtimes (all of them, or
 # the ones named) that are not end-of-life, from the tags of their upstream images (runtime_versions:
-# Docker Hub, or the image's own registry) and endoflife.date: DISCOVERED[<runtime>]="<version>
-# <version>…" (a global), with a report
+# Docker Hub, or the image's own registry) and endoflife.date, without the versions the language bot
+# archived (runtimes/<runtime>/archived-versions): DISCOVERED[<runtime>]="<version> <version>…" (a
+# global), with a report
 discover_language_versions() {
   local def runtime repo suffix min_ver depth filter product versions ver result status active_versions
   declare -gA DISCOVERED=()
@@ -118,6 +119,11 @@ discover_language_versions() {
 
     active_versions=""
     for ver in $versions; do
+      # archived by the language bot (past its end of life): never built or pushed again
+      if is_archived "$runtime" "$ver"; then
+        echo -e "  ${RED}✗ ${ver} (archived as ${ARCHIVE_TAG_PREFIX}${ver}: skipping build)${NC}"
+        continue
+      fi
       result=$(check_eol "${product:-$runtime}" "$ver")
       status="${result%%|*}"
 

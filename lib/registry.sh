@@ -218,7 +218,7 @@ ghcr_api() {
   [[ "$ns" == */* ]] && _ghcr_path="${ns#*/}/"
 
   if [ "$host" != "ghcr.io" ] || [ -z "$ns" ]; then
-    echo -e "${RED}--prune supports GHCR (ghcr.io/<owner>) only; delete the tags of ${REGISTRY} in that registry.${NC}"
+    echo -e "${RED}the GitHub Packages API (eol --archive, the patch retention) supports GHCR (ghcr.io/<owner>) only; manage the tags of ${REGISTRY} in that registry.${NC}"
     return 1
   fi
   if [ -z "${GHCR_TOKEN:-}" ]; then
@@ -226,7 +226,7 @@ ghcr_api() {
     return 1
   fi
   if ! command -v jq >/dev/null 2>&1; then
-    echo -e "${RED}--prune needs jq.${NC}"
+    echo -e "${RED}the GitHub Packages API needs jq.${NC}"
     return 1
   fi
   _ghcr_api="https://api.github.com/${GHCR_OWNER_KIND:-orgs}/${owner}/packages/container"

@@ -12,13 +12,15 @@
 #     marks the second chance of one an upstream outage stopped;
 #   - an ML bump moves torch with the torchvision pip installs next to it (the newest whose torch
 #     requirement admits it: an exact pin or a range), both built on the -gpu image's CUDA wheel
-#     index (none: nothing moves), and tensorflow's CPU and CUDA pins together;
+#     index (none: held, exit 4, nothing moves), and tensorflow's CPU and CUDA pins together;
 #   - a toolchain bump moves its ARG in every WebAssembly Dockerfile that has it, with the SHA256
 #     of its downloads, and the reqs mirror's base image of tinygo and rust; a download it cannot
 #     check changes nothing;
 #   - a tool bump moves Maven's ARG with the SHA-512 of its download, which must be the published
 #     one, and the dependency plugin's ARG; nothing without a matching checksum;
 #   - tested-versions gets one line per version, in order, the header kept;
+#   - an archived version (past its end of life) gets its record in archived-versions, leaves
+#     tested-versions and exec-php's fixed releases, and its end of life in the lifecycle;
 #   - a lifecycle entry (deprecated today, its sunset 13 weeks later) goes into
 #     versionDiscovery.lifecycle once per version;
 #   - RunR's catalog offers the runtime at the candidate alone, the e2e check finds the candidate's
@@ -33,7 +35,9 @@
 #     lifecycle of the one before), a suite RunR's release does not have yet counts as skipped, a
 #     red one or one without a result is labelled with what failed (never an empty log), one an
 #     outage stopped is labelled for the next run (a second outage in a row asks a person), a
-#     version whose runtime changed on main since the tested commit is left for the next run;
+#     version whose runtime changed on main since the tested commit is left for the next run, a
+#     held ML release is closed as not planned, a version past its end of life is archived (its
+#     records on main, the issue closed) and one whose registry step fails asks a person;
 #   - the five green toolchains of run 43020609005 (rust, spin, tinygo, wasm-tools, zig) on one
 #     base all land, a patch whose lines moved made again on the new main; one made again with
 #     other lines waits for the next run, and one the bot cannot land is reported while the others
@@ -100,9 +104,12 @@ cat > "$tmp/issues.json" <<'EOF'
   {"number": 47, "title": "lang: bun 1.5.0 released", "labels": []},
   {"number": 48, "title": "lang: maven-dependency-plugin 3.12.0 released", "labels": []},
   {"number": 49, "title": "lang: maven 3.9 released", "labels": []},
-  {"number": 50, "title": "lang: zig 0.17.1 released", "labels": [{"name": "lang: upstream outage"}]}
+  {"number": 50, "title": "lang: zig 0.17.1 released", "labels": [{"name": "lang: upstream outage"}]},
+  {"number": 55, "title": "lang: php 8.2 end of life 2026-12-31", "labels": []},
+  {"number": 56, "title": "lang: go 1.25 end of life 2026-11-11", "labels": []}
 ]
 EOF
+export LANG_TODAY=2026-11-11
 plan="$(bash "$bot" plan "$tmp/issues.json")"
 [ "$(jq -c '[.tests[] | [.issue, .kind, .runtime, .version, .full, .key]] | sort' <<<"$plan")" = '[[30,"language","python","3.13","3.13.10","python-3.13"],[31,"language","python","3.16","3.16.0","python-3.16"],[33,"ml","pytorch","2.15","2.15.0","pytorch"],[34,"wasm","tinygo","0.43.0","0.43.0","wasm-tinygo"],[39,"wasm","spin","4.2.0","4.2.0","wasm-spin"],[41,"wasm","componentize-py","0.26.0","0.26.0","wasm-componentize-py"],[44,"language","java","25.0","25.0.6","java-25.0"],[46,"tool","maven","3.9.18","3.9.18","java-maven"],[47,"language","bun","1.5","1.5.0","bun-1.5"],[48,"tool","maven-dependency-plugin","3.12.0","3.12.0","java-maven-dependency-plugin"],[50,"wasm","zig","0.17.1","0.17.1","wasm-zig"]]' ] \
   || fail "tests: $(jq -c .tests <<<"$plan")"
@@ -114,11 +121,16 @@ plan="$(bash "$bot" plan "$tmp/issues.json")"
 [ "$(jq -c '[.tests[] | select(.outage) | .issue]' <<<"$plan")" = '[50]' ] || fail "the outage's second chance: $(jq -c .tests <<<"$plan")"
 [ "$(jq -c '[.superseded[] | [.issue, .by]] | sort' <<<"$plan")" = '[[25,30],[29,39],[45,46]]' ] || fail "superseded: $(jq -c .superseded <<<"$plan")"
 [ "$(jq -c .attention <<<"$plan")" = '[]' ] || fail "attention: $(jq -c .attention <<<"$plan")"
-for i in 32 35 36 37 42 49; do jq -e --argjson i "$i" '.skipped[] | select(.issue == $i)' <<<"$plan" >/dev/null || fail "#${i} not skipped: $plan"; done
+for i in 32 36 37 42 49 55 56; do jq -e --argjson i "$i" '.skipped[] | select(.issue == $i)' <<<"$plan" >/dev/null || fail "#${i} not skipped: $plan"; done
+# an end of life whose date is past is archived (python 3.10); one still ahead, or today's, is a
+# notice for people until then (php 8.2, go 1.25)
+[ "$(jq -c .archive <<<"$plan")" = '[{"issue":35,"runtime":"python","version":"3.10","eol":"2026-10-31"}]' ] || fail "the archive: $(jq -c .archive <<<"$plan")"
 plan="$(bash "$bot" plan "$tmp/issues.json" --only=32)"
-[ "$(jq -c '[.tests[].issue]' <<<"$plan")" = '[32]' ] && [ "$(jq -c .retrigger <<<"$plan")" = '[32]' ] || fail "--only: $plan"
+[ "$(jq -c '[.tests[].issue]' <<<"$plan")" = '[32]' ] && [ "$(jq -c .retrigger <<<"$plan")" = '[32]' ] && [ "$(jq -c .archive <<<"$plan")" = '[]' ] || fail "--only: $plan"
+[ "$(bash "$bot" plan "$tmp/issues.json" --only=35 | jq -c '[.archive[].issue]')" = '[35]' ] || fail "--only of an end of life"
+unset LANG_TODAY
 bash "$bot" plan "$tmp/issues.json" --only='1;x' >/dev/null 2>&1 && fail "--only takes numbers only"
-echo "ok - the plan: the newest release per language version (Java, .NET, Ruby, Bun too), tool, ML runtime and toolchain with its RunR suites, the older superseded, end of life, passed, unknown and held issues skipped"
+echo "ok - the plan: the newest release per language version (Java, .NET, Ruby, Bun too), tool, ML runtime and toolchain with its RunR suites, the older superseded, a past end of life archived, an end of life ahead, passed, unknown and held issues skipped"
 
 # --- ML bump ----------------------------------------------------------------------------------------
 export WATCH_FIXTURES="$tmp/fixtures"
@@ -150,14 +162,16 @@ out="$(bash "$bot" ml-bump pytorch 2.15.1)" || fail "ml-bump pytorch 2.15.1: ${o
 out="$(bash "$bot" ml-bump pytorch 2.17.2)" || fail "ml-bump pytorch 2.17.2: ${out}"
 [ "$(torch_pins)" = "torch==2.17.2 torchvision==0.31.0 " ] || fail "the torch pins (a range): $(torch_pins)"
 # nothing moves: no torchvision admits torch 3.0.0; the one that admits 2.18.0 has no build for the
-# -gpu image; torch 2.16.0 has none itself (another CUDA is a person's decision)
+# -gpu image; torch 2.16.0 has none itself
+# (held, exit 4: nobody is asked, the CPU and GPU images stay on their pin together; exit 2: a
+# torch no torchvision admits)
 for v in 3.0.0 2.18.0 2.16.0; do
   rc=0; out="$(bash "$bot" ml-bump pytorch "$v" 2>&1)" || rc=$?
-  [ "$rc" = 2 ] && [ "$(torch_pins)" = "torch==2.17.2 torchvision==0.31.0 " ] || fail "torch ${v}: exit ${rc}, $(torch_pins), ${out}"
+  [ "$rc" = "$([ "$v" = 3.0.0 ] && echo 2 || echo 4)" ] && [ "$(torch_pins)" = "torch==2.17.2 torchvision==0.31.0 " ] || fail "torch ${v}: exit ${rc}, $(torch_pins), ${out}"
   case "$v" in
     3.0.0) grep -qF 'no torchvision release on PyPI admits torch 3.0.0' <<<"$out" ;;
-    2.18.0) grep -qF "has none of the torchvision releases that admit torch 2.18.0 (0.31.1) built for ${cu}" <<<"$out" ;;
-    2.16.0) grep -qF "has no torch 2.16.0 built for ${cu}" <<<"$out" ;;
+    2.18.0) grep -qxF "held: no ${cu} wheel of a torchvision that admits torch 2.18.0 (0.31.1; ${cuda_index}/torchvision/, the -gpu image's index); CPU and GPU stay on torch 2.17.2" <<<"$out" ;;
+    2.16.0) grep -qxF "held: no ${cu} wheel of torch 2.16.0 (${cuda_index}/torch/, the -gpu image's index); CPU and GPU stay on torch 2.17.2" <<<"$out" ;;
   esac || fail "torch ${v}: ${out}"
 done
 bash "$bot" ml-bump tensorflow 2.22.0 >/dev/null || fail "ml-bump tensorflow"
@@ -266,6 +280,42 @@ fi
 bash "$bot" lifecycle wasm-rust 4.1 >/dev/null 2>&1 && fail "a lifecycle entry without versionDiscovery"
 bash "$bot" lifecycle bun 1 >/dev/null 2>&1 && fail "a lifecycle entry of a version that is no X.Y"
 echo "ok - lifecycle: deprecated today, the sunset 13 weeks later, once per version, in versionDiscovery.lifecycle"
+
+# --- archive: a version past its end of life --------------------------------------------------------
+digest_of() { printf 'sha256:%064d' "$1"; }
+arch="$repo/runtimes/python/archived-versions"
+printf '3.10 3.10.19\n' >> "$repo/runtimes/python/tested-versions"
+manifest_before="$(cat "$repo/runtimes/python/runtime.yaml")"
+out="$(bash "$bot" archive python 3.10 2026-10-01 "$(digest_of 1)")" || fail "archive: ${out}"
+[ "$out" = "python 3.10: archived ($(digest_of 1), end of life 2026-10-01)" ] || fail "archive: ${out}"
+[ "$(grep -v '^#' "$arch")" = "3.10 2026-10-01 $(digest_of 1)" ] && grep -q '^# ' "$arch" || fail "archived-versions: $(cat "$arch")"
+[ "$(grep -v '^#' "$repo/runtimes/python/tested-versions" | paste -sd '|' -)" = "3.13 3.13.10|3.16 3.16.0" ] || fail "tested-versions: $(cat "$repo/runtimes/python/tested-versions")"
+# RunR reads the end of life from the manifest: versionDiscovery.lifecycle, the rest unchanged
+[ "$(sed -n '/^  lifecycle:/,/^[^ ]/p' "$repo/runtimes/python/runtime.yaml" | sed -n 2p)" = '    "3.10": {eol: "2026-10-01"}' ] || fail "the lifecycle: $(cat "$repo/runtimes/python/runtime.yaml")"
+[ "$(sed '/^  lifecycle:/,/^    "3.10"/d' "$repo/runtimes/python/runtime.yaml")" = "$manifest_before" ] || fail "the rest of python's manifest changed"
+# again: the same records
+before="$(cat "$arch" "$repo/runtimes/python/runtime.yaml" "$repo/runtimes/python/tested-versions" | sha256sum)"
+bash "$bot" archive python 3.10 2026-10-01 "$(digest_of 1)" >/dev/null || fail "archive again"
+[ "$(cat "$arch" "$repo/runtimes/python/runtime.yaml" "$repo/runtimes/python/tested-versions" | sha256sum)" = "$before" ] || fail "archive again changed the records"
+# a version with a lifecycle entry already (bun 1.4, deprecated with a sunset) keeps it, with its end of life
+bash "$bot" archive bun 1.4 2027-02-06 "$(digest_of 2)" >/dev/null || fail "archive bun"
+grep -qxF '    "1.4": {deprecated: "2026-11-07", sunset: "2027-02-06", eol: "2027-02-06"}' "$repo/runtimes/bun/runtime.yaml" || fail "bun's lifecycle: $(cat "$repo/runtimes/bun/runtime.yaml")"
+# exec-php's fixed releases lose the archived branch, the others stay
+bash "$bot" archive php 8.2 2026-12-31 "$(digest_of 3)" >/dev/null || fail "archive php"
+fixed="$(sed -n 's/^ARG PHP_FIXED_RELEASES="\(.*\)"$/\1/p' "$here/runtimes/php/Dockerfile")"
+[ "$(grep '^ARG PHP_FIXED_RELEASES=' "$repo/runtimes/php/Dockerfile")" = "ARG PHP_FIXED_RELEASES=\"$(tr ' ' '\n' <<<"$fixed" | grep -v '^8\.2\.' | paste -sd ' ' -)\"" ] \
+  || fail "php's fixed releases: $(grep FIXED "$repo/runtimes/php/Dockerfile")"
+if python3 -c 'import yaml' 2>/dev/null; then
+  python3 -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); assert d["versionDiscovery"]["lifecycle"] == {"3.10": {"eol": "2026-10-01"}}, d' "$repo/runtimes/python/runtime.yaml" \
+    && python3 -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); assert d["versionDiscovery"]["lifecycle"]["1.4"] == {"deprecated": "2026-11-07", "sunset": "2027-02-06", "eol": "2027-02-06"}, d' "$repo/runtimes/bun/runtime.yaml" \
+    || fail "the lifecycle does not read as RunR reads it"
+fi
+# the build and the watch leave it out
+(SCRIPT_DIR="$repo"; source "$repo/lib/common.sh"; is_archived python 3.10 && ! is_archived python 3.13 && [ "$(archived_versions python)" = 3.10 ]) || fail "is_archived"
+bash "$bot" archive python 3.10 2026-10-01 sha256:nope >/dev/null 2>&1 && fail "archive without a digest"
+bash "$bot" archive pytorch 2.14 2026-10-01 "$(digest_of 1)" >/dev/null 2>&1 && fail "archive of an ML runtime"
+bash "$bot" archive python 3 2026-10-01 "$(digest_of 1)" >/dev/null 2>&1 && fail "archive of a version that is no X.Y"
+echo "ok - archive: the record in archived-versions, out of tested-versions and of the fixed releases, the end of life in versionDiscovery.lifecycle; the same again changes nothing"
 
 # --- RunR: the catalog, the e2e check, the pins -----------------------------------------------------
 runr="$tmp/runr"
@@ -388,8 +438,22 @@ cat > "$dir/tests.json" <<EOF
  {"issue": 45, "kind": "tool", "runtime": "maven", "version": "${maven_new}", "full": "${maven_new}", "key": "java-maven", "suites": ["test"], "outage": true},
  {"issue": 51, "kind": "wasm", "runtime": "zig", "version": "${zig_new}", "full": "${zig_new}", "key": "wasm-zig", "suites": ["test-images"], "outage": false},
  {"issue": 52, "kind": "wasm", "runtime": "rust", "version": "1.99.1", "full": "1.99.1", "key": "wasm-rust", "suites": ["test-wasm"], "outage": true},
- {"issue": 53, "kind": "wasm", "runtime": "wasm-tools", "version": "1.263.0", "full": "1.263.0", "key": "wasm-wasm-tools", "suites": ["test-images"]}]
+ {"issue": 53, "kind": "wasm", "runtime": "wasm-tools", "version": "1.263.0", "full": "1.263.0", "key": "wasm-wasm-tools", "suites": ["test-images"]},
+ {"issue": 57, "kind": "ml", "runtime": "pytorch", "version": "2.16", "full": "2.16.0", "key": "pytorch-held", "suites": ["test-ml"]}]
 EOF
+# 35: python 3.10 past its end of life, archived; 58: go 1.25, whose registry step fails
+cat > "$dir/archive.json" <<'EOF'
+[{"issue": 35, "runtime": "python", "version": "3.10", "eol": "2026-10-01"},
+ {"issue": 58, "runtime": "go", "version": "1.25", "eol": "2026-08-19"}]
+EOF
+# the registry's side (eol_archive_image of lib/eol.sh, tested by test/eol_test.sh): the digest the
+# floating tag named, kept as eol-<version>
+cat > "$tmp/archive-image" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = python ] || { echo "the registry refused exec-$1:$2" >&2; exit 1; }
+printf 'sha256:%064d\n' 7
+EOF
+chmod +x "$tmp/archive-image"
 result() { mkdir -p "$dir/results/lang-result-$1"; echo "$2" > "$dir/results/lang-result-$1/status"; echo "$tested" > "$dir/results/lang-result-$1/sha"; echo "the end of the $1 log" > "$dir/results/lang-result-$1/tail.txt"; }
 result python-3.16-build success
 echo ghcr.io/brf-tech/runr/candidates/exec-python:3.16.0 > "$dir/results/lang-result-python-3.16-build/image"
@@ -439,26 +503,36 @@ echo "Error: failed to fetch https://github.com/project-zot/helm-charts/releases
 # wasm-tools: a red build whose failed step printed nothing into the log
 result wasm-wasm-tools-build failure
 : > "$dir/results/lang-result-wasm-wasm-tools-build/tail.txt"
+# pytorch 2.16.0: its bump held it (no wheel for the -gpu image's CUDA); its e2e skipped
+result pytorch-held-build held
+echo "held: no cu126 wheel of torch 2.16.0 (https://download.pytorch.org/whl/cu126/torch/, the -gpu image's index); CPU and GPU stay on torch ${torch_old}" > "$dir/results/lang-result-pytorch-held-build/held"
+mkdir -p "$dir/results/lang-result-pytorch-held-e2e-test-ml"
+echo skipped > "$dir/results/lang-result-pytorch-held-e2e-test-ml/status"
 echo "RunR v0.6.7 has no bun runtime yet: its next release brings it and discovers its versions in the registry, nothing to move" > "$dir/pins/bun"
 echo "a tool inside the image, which RunR v0.6.7 does not pin: nothing to move" > "$dir/pins/maven"
 echo "pins no version of python: it discovers them in the registry, nothing to move" > "$dir/pins/python"
 echo "the images keep their version, which RunR v0.6.7 pins (WASM_RUNTIME_VERSION): nothing to move" > "$dir/pins/tinygo"
-(cd "$work" && LANG_TODAY=2026-11-07 LANG_BOT_NAME="$bot_name" LANG_BOT_EMAIL="$bot_email" bash ci/lang-bot.sh land "$dir" https://example.test/run/9) > "$tmp/out" 2>&1 \
+(cd "$work" && LANG_TODAY=2026-11-07 LANG_BOT_NAME="$bot_name" LANG_BOT_EMAIL="$bot_email" LANG_ARCHIVE_IMAGE="$tmp/archive-image" bash ci/lang-bot.sh land "$dir" https://example.test/run/9) > "$tmp/out" 2>&1 \
   || fail "land: $(cat "$tmp/out")"
 log="$(git --git-dir="$origin" log --format='%an <%ae>|%cn <%ce>|%s' main)"
-[ "$(head -n 6 <<<"$log")" = "${bot_id}|${bot_id}|fix(java): maven ${maven_new} (was ${maven_old})
+[ "$(head -n 7 <<<"$log")" = "${bot_id}|${bot_id}|chore(python): python 3.10 archived, end of life 2026-10-01
+${bot_id}|${bot_id}|fix(java): maven ${maven_new} (was ${maven_old})
 ${bot_id}|${bot_id}|feat(bun): bun 1.5 (1.5.0)
 ${bot_id}|${bot_id}|fix(wasm): tinygo ${tinygo_new} (was ${tinygo_old})
 ${bot_id}|${bot_id}|fix(pytorch): torch ${torch_new}, torchvision 0.30.0
 ${bot_id}|${bot_id}|feat(python): python 3.16 (3.16.0)
 someone <someone@example.test>|someone <someone@example.test>|base" ] || fail "main: ${log}"
 # each of the bot's commits says it is the bot's: RunR-Lang-Bot: <name> <version>
-[ "$(git --git-dir="$origin" log -5 --format='%(trailers:key=RunR-Lang-Bot,valueonly,separator=%x2C)' main | grep -v '^$')" = "maven ${maven_new}
+[ "$(git --git-dir="$origin" log -6 --format='%(trailers:key=RunR-Lang-Bot,valueonly,separator=%x2C)' main | grep -v '^$')" = "python 3.10
+maven ${maven_new}
 bun 1.5.0
 tinygo ${tinygo_new}
 pytorch ${torch_new}
 python 3.16.0" ] || fail "the trailers: $(git --git-dir="$origin" log -5 --format=%B main)"
 [ "$(git --git-dir="$origin" show main:runtimes/python/tested-versions | grep -v '^#')" = "3.16 3.16.0" ] || fail "main's tested-versions"
+# python 3.10: archived on main (the record, its end of life for RunR)
+[ "$(git --git-dir="$origin" show main:runtimes/python/archived-versions | grep -v '^#')" = "3.10 2026-10-01 $(printf 'sha256:%064d' 7)" ] \
+  && git --git-dir="$origin" show main:runtimes/python/runtime.yaml | grep -qxF '    "3.10": {eol: "2026-10-01"}' || fail "main's python 3.10 archive"
 git --git-dir="$origin" show main:runtimes/pytorch/requirements-torch.txt | grep -qxF "torch==${torch_new}" || fail "main's torch pin"
 git --git-dir="$origin" show main:runtimes/wasm-go/Dockerfile | grep -qxF "ARG TINYGO_VERSION=${tinygo_new}" && git --git-dir="$origin" show main:lib/mirror.sh | grep -qF "\"tinygo:${tinygo_new}|tinygo/tinygo:${tinygo_new}\"" \
   || fail "main's tinygo"
@@ -494,6 +568,15 @@ grep -qF 'test` on the candidate: skipped (RunR v0.6.7 has no bun runtime yet' "
 grep -qF "$(printf 'label\t45\tlang: passed')" <<<"$actions" || fail "maven: ${actions}"
 # maven passed on its second chance: the outage label goes
 grep -qF "$(printf 'unlabel\t45\tlang: upstream outage')" <<<"$actions" || fail "the outage label stayed on a green one: ${actions}"
+# python 3.10: closed with what was archived where; go 1.25: its registry refused, a person looks
+grep -qF "$(printf 'close\t35')" <<<"$actions" && grep -qF '**Archived: python 3.10** (end of life 2026-10-01)' "$dir/comments/35.md" \
+  && grep -qF "exec-python:eol-3.10" "$dir/comments/35.md" && ! grep -qF "$(printf 'label\t35')" <<<"$actions" || fail "the archive's issue: ${actions} $(cat "$dir/comments/35.md")"
+grep -qF "$(printf 'label\t58\tneeds attention')" <<<"$actions" && grep -qF 'the bot could not archive go 1.25' "$dir/comments/58.md" \
+  && grep -qF 'the registry refused exec-go:1.25' "$dir/comments/58.md" || fail "a failed archive: ${actions} $(cat "$dir/comments/58.md" 2>/dev/null)"
+# pytorch 2.16.0: held, closed as not planned, nobody asked
+grep -qF "$(printf 'close\t57\tnot planned')" <<<"$actions" && ! grep -qF "$(printf 'label\t57')" <<<"$actions" \
+  && grep -qF "**Held: pytorch 2.16.0** — held: no cu126 wheel of torch 2.16.0" "$dir/comments/57.md" && grep -qF "CPU and GPU stay on torch ${torch_old}" "$dir/comments/57.md" \
+  || fail "the held one: ${actions} $(cat "$dir/comments/57.md" 2>/dev/null)"
 # zig: an outage, nobody is asked; the next run tests it again
 grep -qF "$(printf 'label\t51\tlang: upstream outage')" <<<"$actions" && ! grep -qF "$(printf 'label\t51\tneeds attention')" <<<"$actions" || fail "the outage: ${actions}"
 grep -qF '**Outage: zig' "$dir/comments/51.md" && grep -qF 'wasi-sdk-34.0-x86_64-linux.tar.gz (HTTP 504)' "$dir/comments/51.md" \
@@ -511,6 +594,7 @@ echo "ok - landing: green versions, tool and ML pins and toolchains on main as f
 
 # main changed the runtime since the tested commit: left for the next run
 (cd "$work" && git fetch -q origin && git checkout -q --detach origin/main && echo "# changed" >> runtimes/python/Dockerfile && git commit -q -am "python: a change" && git push -q origin HEAD:refs/heads/main)
+echo '[]' > "$dir/archive.json"
 cat > "$dir/tests.json" <<'EOF'
 [{"issue": 40, "kind": "language", "runtime": "python", "version": "3.17", "full": "3.17.0", "key": "python-3.17", "suites": ["test"]}]
 EOF

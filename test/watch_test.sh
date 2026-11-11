@@ -226,3 +226,13 @@ grep -qF '✗ 4.0: endoflife.date (ruby) cannot be read' "$tmp/out" && [ ! -f "$
 grep -qF 'maven: its releases on Maven Central (org.apache.maven:apache-maven) cannot be read' "$tmp/out" || fail "Maven Central: $(cat "$tmp/out")"
 [ -f "$reports/php-8.3-eol.md" ] && [ -f "$reports/rust-1.99.0.md" ] && [ -f "$reports/bun-1.5.0.md" ] || fail "the others were not checked"
 echo "ok - an upstream that does not answer fails the watch; the rest is still checked and reported, an end of life also without Docker Hub"
+
+# a version the language bot archived (runtimes/<runtime>/archived-versions) is followed no more
+mkdir -p "$RUNTIMES_DIR/python"
+echo "3.13 2029-10-31 sha256:$(printf '0%.0s' {1..64})" > "$RUNTIMES_DIR/python/archived-versions"
+rm -rf "$reports"
+cmd_watch --report="$reports" > "$tmp/out" 2>&1 || true
+[ ! -f "$reports/python-3.13.10.md" ] && [ -f "$reports/python-3.16.0.md" ] && grep -qF '✓ 3.13: archived (ghcr.io/brf-tech/runr/exec-python:eol-3.13)' "$tmp/out" \
+  || fail "an archived version was followed: $(cat "$tmp/out")"
+grep -qF 'archives it by itself and closes this issue' "$reports/python-3.10-eol.md" || fail "the end-of-life notice: $(cat "$reports/python-3.10-eol.md")"
+echo "ok - an archived version is followed no more; the end-of-life notice says the bot archives it"

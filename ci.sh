@@ -73,7 +73,8 @@ Commands:
                                       (linux/amd64, pushed exactly as smoke-tested)
   mirror-reqs [--dry-run] [image...]  Multi-arch mirror of the upstream reqs images (all, or the ones named)
   mirror-bases [--dry-run]            Multi-arch mirror of the language runtimes' base images
-  eol [--prune] [--yes]               EOL check of the GHCR exec-* images + optional cleanup
+  eol [--archive] [--yes]             EOL check of the GHCR exec-* images; --archive keeps an EOL
+                                      image as eol-<version> and removes its floating tag
   watch [--report=DIR]                The upstream releases the images do not follow yet: language
                                       versions and patch releases, end of life, the ML frameworks,
                                       the WebAssembly toolchains (lib/watch.sh; the language bot)
@@ -93,7 +94,7 @@ Environment:
                   Seconds before the one retry of a copy refused with DENIED (default: 10)
   GHCR_USERNAME, GHCR_TOKEN
                   Registry reads of private packages; GHCR_TOKEN also deletes package versions
-                  (eol --prune, the patch retention of feed update --push)
+                  (eol --archive: the floating tag; the patch retention of feed update --push)
   PATCH_LEVEL, PATCH_REASON_EN, PATCH_REASON_TR, PATCH_CVES, PATCH_URL, PATCH_DEADLINE_HOURS,
   PATCH_DEADLINE_AT, PATCH_PROMOTE_UNCHANGED, PATCH_RUNTIMES, PATCH_VERSIONS
                   Defaults of the patch flags (the patch workflow sets them)

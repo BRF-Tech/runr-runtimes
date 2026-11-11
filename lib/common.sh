@@ -78,6 +78,25 @@ runtime_product() {
   echo "${product:-$runtime}"
 }
 
+# The versions of a language runtime past their end of life that the language bot archived
+# (ci/lang-bot.sh archive): runtimes/<runtime>/archived-versions, one "<major.minor> <end of life>
+# <digest>" per line. The image stays as exec-<runtime>:eol-<major.minor> (and its patch tags); its
+# floating tag is gone. The build, the watch and the patch feed leave such a version out.
+ARCHIVE_TAG_PREFIX="eol-"
+
+# archived_versions RUNTIME — the archived versions of RUNTIME, one per line
+archived_versions() {
+  local file
+  file="$(runtime_dir "$1")/archived-versions"
+  [ -f "$file" ] || return 0
+  awk '!/^#/ && NF >= 1 { print $1 }' "$file"
+}
+
+# is_archived RUNTIME VERSION — whether the bot archived VERSION of RUNTIME
+is_archived() {
+  archived_versions "$1" | grep -qxF -- "$2"
+}
+
 # base_mirror_name REPO — the name of an upstream image on the reqs mirror: the repository's last
 # segment for Docker Hub (library/python → python, oven/bun → bun), the path with "-" for "/" for
 # an image with its registry (mcr.microsoft.com/dotnet/sdk → dotnet-sdk)

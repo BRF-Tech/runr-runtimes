@@ -214,7 +214,7 @@ published.
 | Title | When |
 |-------|------|
 | `lang: <runtime> <X.Y.Z> released` | a language runtime of `RUNTIME_DEFS` (python, nodejs, go, php, java, dotnet, ruby, bun): a new patch release of a published version, or a new version not published yet, as `ci.sh build` discovers it (Node.js: the newest minor of an even major; Java: an Eclipse Temurin LTS major; .NET: a released version, not a preview or release candidate; Bun: the newest minor), from the tags of the base image (Docker Hub, MCR for .NET; a .NET release is the runtime's, read from `dotnet/runtime-deps`, not the SDK's). Not a release `runtimes/<runtime>/tested-versions` lists already: the next publish publishes that one |
-| `lang: <runtime> <X.Y> end of life <date>` | a published version past its end of life or within 60 days of it (endoflife.date), also when the base image's registry does not answer. For people: the weekly build stops building it by itself once the date is past |
+| `lang: <runtime> <X.Y> end of life <date>` | a published version past its end of life or within 60 days of it (endoflife.date), also when the base image's registry does not answer. A notice until the date (RunR's reminders count down to it); once the date is past, the bot archives the version and closes the issue (below) |
 | `lang: maven\|maven-dependency-plugin <X.Y.Z> released` | a release on Maven Central newer than its `ARG` in `runtimes/java/Dockerfile`, in the pin's major line (Maven 4 is a person's change) |
 | `lang: pytorch\|tensorflow <X.Y.Z> released` | a framework release on PyPI newer than its pin |
 | `lang: <tool> <version> released` | a toolchain of the WebAssembly images newer than its `ARG` (spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk, rust) |
@@ -257,9 +257,12 @@ release and closes the older ones as superseded.
   2026-11-07: `exec-pytorch:2.14` 410 MiB, `exec-tensorflow:2.21` 495 MiB). RunR releases up to
   0.6.7 have no ML case: until RunR's next release, the bot reports the suite as skipped and the
   build and smoke test decide. The `-gpu` images are not tested here: the heavy-images workflow
-  builds them. A torch without a build on the `-gpu` image's CUDA wheel index (`Dockerfile.gpu`,
-  cu126), or without a torchvision there, is not moved: the bump fails and says so, since another
-  CUDA (and the GPU nodes' driver it needs) is a person's decision.
+  builds them. There is no CPU/GPU split: both images install the same pins, always the newest
+  that works on both. A torch without a wheel on the `-gpu` image's CUDA wheel index
+  (`Dockerfile.gpu`, cu126), or without a torchvision there, is held (`ml-bump` exit 4): nothing
+  is built, nobody is asked, and the issue is closed as "held: no cu126 wheel; CPU and GPU stay on
+  <the current torch>". The bot keeps watching: a newer torch, or a newer patch of the current
+  minor, that has the wheel is bumped and tested as usual.
 - **A WebAssembly toolchain** (`ci/lang-bot.sh wasm-bump`). Its `ARG` moves in every
   `runtimes/wasm-*/Dockerfile` that has it, with the SHA256 of its downloads (Spin, wasi-sdk and
   wasm-tools: the release assets; zig: ziglang.org's index), and the base image of the reqs mirror
@@ -296,6 +299,22 @@ release and closes the older ones as superseded.
   of an empty block). Nothing is committed: the weekly publish holds a language version, and a
   tool, ML or toolchain pin stays where it was. Run the workflow with the issue's number to test
   it again (it takes the label off), or wait for a newer release to supersede the issue.
+- **An end of life.** RunR counts down to a version's end of life in its reminders; after it the
+  version leaves the picker and its projects can no longer be saved or deployed (running
+  deployments are never touched). The `lang: <runtime> <X.Y> end of life <date>` issue is a notice
+  until that date. The first run after it archives the version, nobody asked (`ci/lang-bot.sh
+  land`, `archive-one`; `lib/eol.sh` `eol_archive_image`): the image the floating tag names stays,
+  by its digest, as `exec-<runtime>:eol-<X.Y>` with its patch tags (history); the floating tag
+  `<X.Y>` goes (GHCR deletes no tag by itself: it moves onto an empty image of its own, whose
+  package version is deleted), so RunR's `executor:sync` no longer offers the version, while its
+  projects keep it, shown and locked as end-of-life, and running deployments keep their image by
+  digest. On `main`: `runtimes/<runtime>/archived-versions` (`<X.Y> <end of life> <digest>`), the
+  version out of `tested-versions` (and of exec-php's `PHP_FIXED_RELEASES`), and `{eol: <date>}`
+  for it in `versionDiscovery.lifecycle` of `runtime.yaml`, which RunR reads whatever
+  endoflife.date says. The build, the watch and the patch feed leave an archived version out (its
+  patch tags all stay); the publish run the bot starts drops its patches from the signed feed and
+  publishes the runtime catalog. The issue is closed with what was archived where.
+  `ci.sh eol --archive` does the registry's part by hand.
 - **An outage** is not the release's fault, and pages nobody. The downloads retry (the
   Dockerfiles' `curl`, `ci/fetch.sh` for the tools the jobs install, a GitHub release asset
   through the GitHub API when `releases/download` gives 504). A RunR suite that failed on an
@@ -326,7 +345,9 @@ What the workflows need besides their `GITHUB_TOKEN`:
 - **Language tests:**
   - `issues: write` (the labels `needs attention`, `lang: passed`, `lang: upstream outage`);
   - `packages: write` (the base images mirrored, the candidates pushed);
-  - in its landing job alone, `contents: write` and `actions: write` (the publish workflow).
+  - in its landing job alone, `contents: write` and `actions: write` (the publish workflow), and
+    `packages: write` to archive an end-of-life version (its `eol-<X.Y>` tag, its floating tag
+    removed: the Admin role of this repository on the language runtimes' packages, PACKAGES.md).
 
 The bot takes RunR from its public repository, at its last release (`gh release view`): nothing of
 RunR's private development repository, no deploy key. `test/workflows_test.sh` keeps all of this:
@@ -356,8 +377,8 @@ the `sh.runr.patch.build` annotation of the floating tag's patch; only a differe
 (the same build, from the builder's cache, with the patch annotations).
 
 The patch tags of a version are kept for its newest five patches. Older patch tags are deleted by
-the feed update after a publish (through the GitHub Packages API, as `ci.sh eol --prune`), never a
-floating tag and never a patch the feed lists. RunR's runtime discovery reads only `<major.minor>`
+the feed update after a publish (through the GitHub Packages API), never a floating tag, never a
+patch the feed lists and never one of an archived version. RunR's runtime discovery reads only `<major.minor>`
 tags; patch tags do not appear as versions.
 
 ### Levels and metadata

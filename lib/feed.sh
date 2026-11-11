@@ -14,12 +14,14 @@
 #      update did not run). The results of this run's builds (--results) add their patches and
 #      promote an unchanged image's patch to the level of a patch request.
 #   3. per floating tag the newest PATCH_KEEP (5) patches, newest first; the newest 10 platform
-#      releases
+#      releases; none of a version the language bot archived (runtimes/<runtime>/archived-versions:
+#      past its end of life, no current version any more)
 #   4. checked against schema/patch-feed.v1.json and the rules the schema cannot express
 #   5. --push: pushed as feed-candidate, signed by digest, the signature verified with
 #      keys/patch-feed.pub, then tagged feed (so feed only ever names a signed feed)
 #   6. retention: patch tags beyond the newest PATCH_KEEP of their floating tag, and not in the
-#      feed, are deleted from the registry (--push), never a floating tag
+#      feed, are deleted from the registry (--push), never a floating tag nor a patch tag of an
+#      archived version (its history)
 # Without --push it is a dry run: it prints the changes and what retention would delete.
 #
 # Signing: PATCH_FEED_SIGNING_KEY is the cosign key reference (default
@@ -241,9 +243,20 @@ feed_registry_entries() {
   rm -f -- "$manifest"
 }
 
+# feed_archived — the versions the language bot archived (archived_versions of lib/common.sh), as
+# a JSON array of {runtime, version}: the feed lists none of their patches
+feed_archived() {
+  local runtime version
+  for runtime in $PATCH_LANGUAGE_RUNTIMES; do
+    for version in $(archived_versions "$runtime"); do
+      jq -nc --arg r "$runtime" --arg v "$version" '{runtime: $r, version: $v}'
+    done
+  done | jq -sc '.'
+}
+
 # feed_prune PUSH FEED — retention: the patch tags of every language runtime beyond the newest
 # PATCH_KEEP of their floating tag and not in FEED; deleted with PUSH=1 (GitHub Packages API),
-# listed otherwise
+# listed otherwise. The patch tags of an archived version all stay (its history).
 feed_prune() {
   local push="$1" feed="$2" runtime repo tags expired=() rc=0 api=0
   for runtime in $PATCH_LANGUAGE_RUNTIMES; do
@@ -253,7 +266,8 @@ feed_prune() {
       continue
     fi
     mapfile -t expired < <(patch_jq -r --argjson tags "$(feed_tags_json "$tags")" --arg runtime "$runtime" \
-      --argjson keep "$PATCH_KEEP" 'include "feed"; retention($tags; $runtime; $keep)[]' "$feed")
+      --argjson keep "$PATCH_KEEP" --argjson archived "$(archived_versions "$runtime" | jq -Rnc '[inputs | select(length > 0)]')" \
+      'include "feed"; retention($tags; $runtime; $keep)[] | select(tag_version as $v | $archived | index($v) | not)' "$feed")
     [ "${#expired[@]}" -gt 0 ] || continue
     if [ "$push" != 1 ]; then
       echo -e "  ${YELLOW}dry run: retention would delete ${REGISTRY}/${repo}: ${expired[*]}${NC}"
@@ -352,7 +366,8 @@ feed_update() {
     --slurpfile found "${work}/found.json" \
     --slurpfile platform "${work}/platform.json" \
     --arg now "$now" --argjson keep "$PATCH_KEEP" --argjson pkeep "$PATCH_FEED_PLATFORM_KEEP" \
-    'include "feed"; $cur[0] | feed_merge($results[0]; $found[0]; $platform[0]; $now; $keep; $pkeep)' \
+    --argjson archived "$(feed_archived)" \
+    'include "feed"; $cur[0] | feed_merge($results[0]; $found[0]; $platform[0]; $now; $keep; $pkeep) | without_archived($archived)' \
     > "${work}/next.json" || { feed_cleanup "$work"; return 1; }
 
   feed_validate "${work}/next.json" || validator_rc=$?

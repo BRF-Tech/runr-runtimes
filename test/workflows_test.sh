@@ -14,7 +14,8 @@
 #     e2e jobs before the suite prints into the job's log the red comment shows, a suite an upstream
 #     outage stopped runs once more, the results say an outage is one (lang-bot.sh upstream), and
 #     the outage label is made and taken off; the bot commits with Burak's identity
-#     and its trailer (RunR-Lang-Bot: <name> <version>);
+#     and its trailer (RunR-Lang-Bot: <name> <version>); an ML release without its CUDA wheel is
+#     held and closed; the land job archives the versions past their end of life;
 #   - the publish workflow holds an untested language version (LANG_GATE), every language runtime
 #     has its tested-versions.
 #
@@ -116,6 +117,17 @@ grep -qF 'bash ci/lang-bot.sh upstream "$RUNNER_TEMP/build.log" > "$RUNNER_TEMP/
 grep -qF 'bash runtimes-repo/ci/lang-bot.sh upstream "$RUNNER_TEMP/e2e.log" > "$RUNNER_TEMP/result/upstream"' <<<"$(job "$lt" e2e)" || fail "the e2e's result does not say an outage"
 grep -qF 'gh label create "lang: upstream outage"' "$lt" || fail "lang-test.yml does not make the outage label"
 grep -qF 'unlabel) gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --remove-label "$arg"' "$lt" || fail "lang-test.yml does not take a label off"
+grep -qF 'close) gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason "${arg:-completed}"' "$lt" || fail "lang-test.yml does not close with a reason (held: not planned)"
+# a torch without a wheel for the -gpu image's CUDA: held by the bump (exit 4), nothing built, its
+# e2e skipped, the issue closed by the land
+grep -qF 'if [ "$rc" = 4 ]; then' <<<"$(job "$lt" build)" && grep -qF 'echo held > "$RUNNER_TEMP/result/status"' <<<"$(job "$lt" build)" \
+  && grep -qF '"$(cat "$RUNNER_TEMP/build/status")" = held' <<<"$(job "$lt" e2e)" || fail "lang-test.yml does not hold an ML release without its CUDA wheel"
+# a version past its end of life: archived by the land job, which may tag and remove package
+# versions for it (the Admin role of this repository on the packages), with crane logged in
+grep -qE 'packages: *write' <<<"$(job "$lt" land)" && grep -qF 'ARCHIVE: ${{ needs.plan.outputs.archive }}' <<<"$(job "$lt" land)" \
+  && grep -qF 'bash ci/fetch.sh "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/' <<<"$(job "$lt" land)" \
+  && grep -qF "needs.plan.outputs.any-archive == 'true'" <<<"$(job "$lt" land)" || fail "lang-test.yml's land job does not archive the end-of-life versions"
+grep -qF 'LANG_ARCHIVE_IMAGE' "$lt" && fail "lang-test.yml replaces the registry step of the archive (LANG_ARCHIVE_IMAGE is the tests')"
 # the one push: HEAD:refs/heads/main of this repository, a fast-forward
 bot="$here/ci/lang-bot.sh"
 gitcmd='^[^#]*(^|[^A-Za-z_-])git( -[cC] [^ ]+)*'
