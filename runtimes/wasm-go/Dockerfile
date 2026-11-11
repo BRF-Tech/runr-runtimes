@@ -14,9 +14,9 @@ USER root
 # ("invalid URI") before the command runs (ci/check-dockerfiles.sh)
 ARG OTEL_SDK_DISABLED=true
 
-ARG SPIN_VERSION=4.1.0
-ARG SPIN_SHA256_AMD64=02fdfe34a52f8bb41da5ac0a7b52abfbf0534cd57710c3a30d13293f4245e65e
-ARG SPIN_SHA256_ARM64=dc19096a4da6038142dc5088f16ec04a18ff8eab08e3afbd587568b578195094
+ARG SPIN_VERSION=4.3.0
+ARG SPIN_SHA256_AMD64=25de087b1f8443e979c8de1339e412c882dcb19eb5990c7888f9d206d0fbfa44
+ARG SPIN_SHA256_ARM64=bd2205a74f70bada243839e7bdf06f55b572b19e6f799d5369d6c4071802bc94
 ARG TARGETARCH
 
 # download OUT URL: curl retries every error 5 times, 10 s apart; a GitHub release asset that still
