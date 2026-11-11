@@ -1,0 +1,6 @@
+# The versions of this runtime past their end of life that the language bot archived
+# (ci/lang-bot.sh archive, .github/workflows/lang-test.yml): "<major.minor> <end of life> <digest>".
+# The image stays as ghcr.io/brf-tech/runr/exec-nodejs:eol-<major.minor> with its
+# patch tags; its floating tag is gone, so RunR's discovery no longer offers it (its projects keep
+# the version, locked as end-of-life) and the build, the watch and the patch feed leave it out.
+20.20 2026-04-30 sha256:659c935f2d7e60c32906c0ff5102e62dbd9c49e54ad9e3938dcb66c6e51dc7b5

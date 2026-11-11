@@ -13,6 +13,8 @@ versionDiscovery:
   image: "ghcr.io/brf-tech/runr/exec-nodejs:{version}"
   eol: nodejs
   filter: lts-even-major
+  lifecycle:
+    "20.20": {eol: "2026-04-30"}
 handler:
   file: main
   function: handler
