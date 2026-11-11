@@ -4,7 +4,7 @@
 # (WasmBuildService); it is never deployed as a function.
 #
 #   docker build -t ghcr.io/brf-tech/runr/exec-wasm-go:4.1 runtimes/wasm-go     (or: ci.sh wasm)
-ARG TINYGO_VERSION=0.42.0
+ARG TINYGO_VERSION=0.44.0
 FROM ghcr.io/brf-tech/runr/reqs/tinygo:${TINYGO_VERSION}
 
 USER root

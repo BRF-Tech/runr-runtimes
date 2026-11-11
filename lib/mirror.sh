@@ -78,7 +78,7 @@ REQS_IMAGES=(
 
   # ── WebAssembly build images (runtimes/wasm-*) and the Spin shim's Rust toolchain
   #    (runtime/wasm-shim-spin of BRF-Tech/runr, pinned by digest) ──
-  "tinygo:0.42.0|tinygo/tinygo:0.42.0"
+  "tinygo:0.44.0|tinygo/tinygo:0.44.0"
   "node:22-bookworm-slim|node:22-bookworm-slim"
   "python:3.13-slim-bookworm|python:3.13-slim-bookworm"
   "rust:1.99.1-slim-bookworm|rust:1.99.1-slim-bookworm"

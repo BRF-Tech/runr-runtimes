@@ -9,7 +9,7 @@
 #
 # Release archives are checked against the sha256 their releases publish (wasi-sdk, wasm-tools: the
 # GitHub release asset digest; Zig: ziglang.org/download/index.json; Spin: as the other wasm runtimes).
-ARG TINYGO_VERSION=0.42.0
+ARG TINYGO_VERSION=0.44.0
 ARG IMAGE_UPLOAD_IMAGE=ghcr.io/brf-tech/runr/image-upload:1.0.0
 
 FROM ${IMAGE_UPLOAD_IMAGE} AS image-upload
