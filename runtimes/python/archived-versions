@@ -1,0 +1,6 @@
+# The versions of this runtime past their end of life that the language bot archived
+# (ci/lang-bot.sh archive, .github/workflows/lang-test.yml): "<major.minor> <end of life> <digest>".
+# The image stays as ghcr.io/brf-tech/runr/exec-python:eol-<major.minor> with its
+# patch tags; its floating tag is gone, so RunR's discovery no longer offers it (its projects keep
+# the version, locked as end-of-life) and the build, the watch and the patch feed leave it out.
+3.10 2026-10-01 sha256:f138e35a1743baa910a692cb481681e4fa62132f7ee3d580739054ad3c23e5c0

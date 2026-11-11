@@ -12,6 +12,8 @@ versionDiscovery:
   repository: ghcr.io/brf-tech/runr/exec-python
   image: "ghcr.io/brf-tech/runr/exec-python:{version}"
   eol: python
+  lifecycle:
+    "3.10": {eol: "2026-10-01"}
 handler:
   file: main
   function: handler
