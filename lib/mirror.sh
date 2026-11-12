@@ -75,6 +75,7 @@ REQS_IMAGES=(
   "node:20-alpine|node:20-alpine"
   "node:22-alpine|node:22-alpine"
   "golang:1.26-alpine|golang:1.26-alpine"
+  "golang:1.27-alpine|golang:1.27-alpine"
 
   # ── WebAssembly build images (runtimes/wasm-*) and the Spin shim's Rust toolchain
   #    (runtime/wasm-shim-spin of BRF-Tech/runr, pinned by digest) ──
@@ -83,6 +84,7 @@ REQS_IMAGES=(
   "python:3.13-slim-bookworm|python:3.13-slim-bookworm"
   "rust:1.99.1-slim-bookworm|rust:1.99.1-slim-bookworm"
   "rust:1.95.0-slim-bookworm|rust:1.95.0-slim-bookworm@sha256:d7482085ff5b415f84dba5647ae71606650bdef00db7aeb69f4b3d170c3e4082"
+  "rust:1.97.0-slim-bookworm|rust:1.97.0-slim-bookworm@sha256:6d220bf85c74e842a79da63997af8d2e74455c0b8847d8bb3a5888572334991d"
 
   # ── CUDA base of hf-serve's GPU image (the pytorch / tensorflow GPU runtimes take NVIDIA's pip wheels) ──
   "pytorch:2.14.1-cuda12.6-cudnn9-runtime|pytorch/pytorch:2.14.1-cuda12.6-cudnn9-runtime"
