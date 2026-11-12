@@ -92,6 +92,8 @@ REQS_IMAGES=(
   # ── FaaS kaniko build base images ──
   "python:3.12-slim|python:3.12-slim"
   "node:22-slim|node:22-slim"
+  # the mcp-node runtime template of RunR 0.7.0 (every platform: the tag had linux/amd64 only)
+  "node:24-slim|node:24-slim"
 
   # ── CI images ──
   "docker:27|docker:27"
