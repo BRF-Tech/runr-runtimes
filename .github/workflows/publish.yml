@@ -15,7 +15,7 @@
 # an unchanged one publishes nothing. The feed job then adds them to the signed patch feed and
 # deletes patch tags beyond the newest five per version (ci.sh feed update --push).
 # On a push and by hand, the catalog job then publishes the signed runtime catalog when the
-# manifests of runtimes/ changed (ci.sh catalog publish --push).
+# manifests of runtimes/ changed (ci.sh catalog publish --push); by hand with catalog off, it does not.
 name: Publish images
 
 on:
@@ -27,6 +27,10 @@ on:
         description: 'Images: keys of ci/images.sh (python nodejs go php java dotnet ruby bun wrapper wasm-rust wasm-go wasm-js wasm-python wasm-exec pytorch tensorflow hf-serve), "cpu" (all of them) or "languages"'
         required: true
         default: languages
+      catalog:
+        description: 'Publish the runtime catalog after the images (off: the images only, e.g. the new versions of a pull request ahead of the RunR release that reads their manifests)'
+        type: boolean
+        default: true
   schedule:
     - cron: '17 3 * * 1'
 
@@ -208,7 +212,7 @@ jobs:
   catalog:
     name: Runtime catalog
     needs: [select, bases, publish]
-    if: ${{ !cancelled() && github.event_name != 'schedule' && !contains(needs.*.result, 'failure') }}
+    if: ${{ !cancelled() && github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.catalog) && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
