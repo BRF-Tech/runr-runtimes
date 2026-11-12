@@ -132,6 +132,22 @@ REQS_IMAGES=(
   "rabbitmq:4.1-management-alpine|rabbitmq:4.1-management-alpine"
   "eclipse-mosquitto:2.0.20|eclipse-mosquitto:2.0.20"
   "greenmail:2.1.3|greenmail/standalone:2.1.3"
+
+  # ── e2e git-deploy suite: the throwaway Forgejo the suite pushes to (FORGEJO_IMAGE of
+  #    runtime/lib/test-git-deploy.sh in BRF-Tech/runr). From Forgejo's own registry, by the digest
+  #    codeberg.org/forgejo/forgejo:9.0.3 has too: Codeberg's registry refuses anonymous pulls while
+  #    it is under load ──
+  "forgejo:9.0.3|data.forgejo.org/forgejo/forgejo:9.0.3@sha256:3c34f11fe8b9983096eef3f8f25c2d2c21c4ae7504960cb203f0b075d1d8ed73"
+
+  # ── CI tools of BRF-Tech/runr's scripts: pandoc of ci/build-runr-sh.sh (the runr.sh site), and
+  #    the Caddy, curl, Alpine and Terraform of ci/runr-sh/verify.sh (its python:3.12-slim is above),
+  #    by the digests Docker Hub and mirror.gcr.io list (public.ecr.aws too for caddy, alpine and
+  #    terraform) ──
+  "pandoc:3.6.4|pandoc/core:3.6.4@sha256:5b8a29d9b70d5d8ca766e5d1dcfc41916b23ab79276a80527be70516110f4c1e"
+  "caddy:2.11.4|caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52"
+  "curl:8.11.1|curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69"
+  "alpine:3.22|alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f"
+  "terraform:1.16.5|hashicorp/terraform:1.16.5@sha256:c7926feace05d0f7e73542842bf3945924e955a1f782cf000ccbb8d18fa42d77"
 )
 
 _require_crane() {
