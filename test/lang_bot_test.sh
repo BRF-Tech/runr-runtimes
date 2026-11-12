@@ -285,6 +285,9 @@ echo "ok - lifecycle: deprecated today, the sunset 13 weeks later, once per vers
 digest_of() { printf 'sha256:%064d' "$1"; }
 arch="$repo/runtimes/python/archived-versions"
 printf '3.10 3.10.19\n' >> "$repo/runtimes/python/tested-versions"
+# the fixture without the real manifest's lifecycle entries (python 3.10 was archived on 2026-11-11)
+awk '/^  lifecycle:$/ { skip = 1; next } skip && /^    / { next } { skip = 0; print }' "$repo/runtimes/python/runtime.yaml" > "$repo/py.yaml" \
+  && mv "$repo/py.yaml" "$repo/runtimes/python/runtime.yaml"
 manifest_before="$(cat "$repo/runtimes/python/runtime.yaml")"
 out="$(bash "$bot" archive python 3.10 2026-10-01 "$(digest_of 1)")" || fail "archive: ${out}"
 [ "$out" = "python 3.10: archived ($(digest_of 1), end of life 2026-10-01)" ] || fail "archive: ${out}"
