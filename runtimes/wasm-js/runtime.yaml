@@ -5,8 +5,8 @@
 # HTTP request: queue messages and schedule ticks arrive as CloudEvents (ce-type header).
 #
 # The versions are toolchains side by side, each with its own build image and build files: 4.1
-# bundles with esbuild 0.25, 4.2 with esbuild 0.28 (its files in 4.2/). The handler and the starter
-# are the same.
+# bundles with esbuild 0.25, 4.2 with esbuild 0.28 (its files in 4.2/), the default of new projects.
+# The handler and the starter are the same.
 apiVersion: runr.sh/v1
 kind: Runtime
 id: wasm-js
@@ -19,9 +19,9 @@ category: general
 versions:
   - version: "4.1"
     image: ghcr.io/brf-tech/runr/exec-wasm-js:4.1
-    default: true
   - version: "4.2"
     image: ghcr.io/brf-tech/runr/exec-wasm-js:4.2
+    default: true
     build:
       files:
         package.json: "@4.2/package.json"

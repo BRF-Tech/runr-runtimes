@@ -27,7 +27,7 @@ at the tags pinned in its `runtime/lib/runtime-images.sh`.
 | `exec-bun` | `<major.minor>`: the newest minor of every Bun major (today 1.4) | amd64, arm64 | `runtimes/bun/` |
 | `exec-pytorch` | `<X.Y>` (CPU) and `<X.Y>-gpu` (CUDA 12.6); X.Y is the torch pin's major.minor (`requirements-torch.txt`) | amd64 | `runtimes/pytorch/` |
 | `exec-tensorflow` | `<X.Y>` (CPU) and `<X.Y>-gpu` (CUDA); X.Y is the tensorflow-cpu pin's major.minor (`requirements-cpu.txt`) | amd64 | `runtimes/tensorflow/` |
-| `exec-wasm-rust`, `exec-wasm-go`, `exec-wasm-js`, `exec-wasm-python`, `exec-wasm-exec` | every `version` of the runtime's `runtime.yaml`: `4.1` of all five, `4.2` of rust, go and js ([WebAssembly versions](#webassembly-versions)) | amd64, arm64 | `runtimes/wasm-*/`, a version with a directory of its own from `runtimes/wasm-*/<version>/` |
+| `exec-wasm-rust`, `exec-wasm-go`, `exec-wasm-js`, `exec-wasm-python`, `exec-wasm-exec` | every `version` of the runtime's `runtime.yaml`: `4.1` of all five, `4.2` of rust and js ([WebAssembly versions](#webassembly-versions)) | amd64, arm64 | `runtimes/wasm-*/`, a version with a directory of its own from `runtimes/wasm-*/<version>/` |
 | `wrapper` | the version of the binary (`const version` in `wrapper/main.go`, today `1.1.0`) | amd64, arm64 | `wrapper/` |
 | `hf-serve` | `<version>` (CPU) and `<version>-cuda`; the version is `__version__` of `runr_hf_serve` (today `1.1.1`) | CPU: amd64, arm64; CUDA: amd64 | `hf-serve/` |
 | `reqs/*` | mirrored third-party images (`lib/mirror.sh`) | as upstream | `lib/mirror.sh` |
@@ -54,9 +54,13 @@ What the images are:
   essentials preinstalled, on the Python runtime's handler server. The `-gpu` images carry the
   CUDA builds of the frameworks.
 - **WebAssembly build images** (`exec-wasm-*`): the toolchains RunR's build Jobs compile functions
-  with (Rust, TinyGo or Go with componentize-go, JavaScript, Python, and wasi-sdk / Zig / TinyGo for
-  `wasm-exec`), with the Spin CLI (one release in every image). They are never deployed as
-  functions.
+  with (Rust, TinyGo, JavaScript, Python, and wasi-sdk / Zig / TinyGo for `wasm-exec`), with the
+  Spin CLI (one release in every image). They are never deployed as functions.
+- **wrapper** (`runr-wrapper`): the universal wrapper, a static binary that is PID 1 of `exec` and
+  `persistent` runtimes. Init containers copy it into a pod or a build context.
+- **hf-serve**: RunR's serving engine for model services on the `transformers` and `diffusers`
+  engines. The CPU image serves transformers pipelines; the CUDA image adds CUDA PyTorch and
+  diffusers (text-to-image).
 
 ### WebAssembly versions
 
@@ -64,11 +68,15 @@ A version of a WebAssembly runtime is a build image with its SDK generation. Whe
 major changes the code functions are written in, it comes as a new version next to the old one,
 so the projects of the old one keep building:
 
-| Runtime | 4.1 (`runtimes/wasm-<lang>/`, the default) | 4.2 (`runtimes/wasm-<lang>/4.2/`) |
+| Runtime | 4.1 (`runtimes/wasm-<lang>/`) | 4.2 (`runtimes/wasm-<lang>/4.2/`, the default of new projects) |
 |---|---|---|
 | `wasm-rust` | Spin Rust SDK 5.2, `wasm32-wasip1` | Spin Rust SDK 8, `wasm32-wasip2` (async, WASIp3) |
-| `wasm-go` | TinyGo, Spin Go SDK v2 | Go 1.27.1 with componentize-go, Spin Go SDK v4 |
 | `wasm-js` | esbuild 0.25 | esbuild 0.28 |
+
+`wasm-go`, `wasm-python` and `wasm-exec` have 4.1 only (their default). The Spin Go SDK v4 builds
+with componentize-go, which needs WASIp3 support in Go itself: until a Go release has it
+([golang/go#76775](https://github.com/golang/go/pull/76775)) it would mean a patched Go of a
+personal fork in the image, so wasm-go 4.2 waits for that release.
 
 A version with a directory of its own (`runtimes/wasm-<lang>/<version>/`: Dockerfile, its default
 build files and prewarm) is built from it by `ci.sh wasm`, the others from `runtimes/wasm-<lang>/`.
@@ -76,17 +84,6 @@ In `runtime.yaml` the version names its own starter and build files (`versions[]
 `versions[].build.files` with `@4.2/…` references: RunR 0.7.0 or later reads them). The language
 bot moves an `ARG` in every version's Dockerfile, and every image keeps one Spin CLI
 (`test/catalog_test.sh`).
-
-wasm-go 4.2 builds with the Go of componentize-go's patched release (`go1.27.1-wasi-on-idle` of
-[dicej/go](https://github.com/dicej/go/releases)), which componentize-go needs for WASIp3 until
-[golang/go#76775](https://github.com/golang/go/pull/76775) is released, on
-`reqs/debian:bookworm-slim` (componentize-go is a glibc binary); `GO_VERSION` and
-`COMPONENTIZE_GO_VERSION` are moved by hand, with their checksums.
-- **wrapper** (`runr-wrapper`): the universal wrapper, a static binary that is PID 1 of `exec` and
-  `persistent` runtimes. Init containers copy it into a pod or a build context.
-- **hf-serve**: RunR's serving engine for model services on the `transformers` and `diffusers`
-  engines. The CPU image serves transformers pipelines; the CUDA image adds CUDA PyTorch and
-  diffusers (text-to-image).
 
 ### The catalog manifests
 

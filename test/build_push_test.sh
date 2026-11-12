@@ -156,13 +156,13 @@ grep -qxF "smoke ${REGISTRY}/wrapper:${wrapper} ${wrapper}" "$log" || fail "wrap
 echo "ok - ci.sh wrapper: wrapper:${wrapper} (const version of wrapper/main.go)"
 
 # --- WebAssembly ------------------------------------------------------------------------------------
-# every version of every runtime: 4.1 of all five from runtimes/wasm-<lang>/, 4.2 of rust, go and js
+# every version of every runtime: 4.1 of all five from runtimes/wasm-<lang>/, 4.2 of rust and js
 # from the version's own directory (runtimes/wasm-<lang>/4.2/)
 images=0
 for lang in rust go js python exec; do
   images=$((images + $(wasm_runtime_versions "$lang" | wc -l)))
 done
-[ "$images" = 8 ] || fail "the WebAssembly runtimes have ${images} versions, not 8"
+[ "$images" = 7 ] || fail "the WebAssembly runtimes have ${images} versions, not 7"
 run cmd_build_wasm --push
 [ "$(grep -c '^docker buildx build ' "$log")" = "$images" ] || fail "cmd_build_wasm --push: not ${images} pushes"
 [ "$(grep -c '^smoke ' "$log")" = "$images" ] || fail "cmd_build_wasm --push: not ${images} smoke tests"
@@ -172,13 +172,13 @@ for lang in rust go js python exec; do
   grep -qE "^docker buildx build .* -t ${REGISTRY}/exec-wasm-${lang}:${version} .*${here}/runtimes/wasm-${lang}$" "$log" \
     || fail "wasm-${lang}: push $(grep '^docker buildx build' "$log")"
 done
-for lang in rust go js; do
+for lang in rust js; do
   grep -qE "^docker buildx build .* -t ${REGISTRY}/exec-wasm-${lang}:4\.2 .*${here}/runtimes/wasm-${lang}/4\.2$" "$log" \
     || fail "wasm-${lang} 4.2: not pushed from runtimes/wasm-${lang}/4.2: $(grep '^docker buildx build' "$log")"
   [ "$(wasm_version_dir "$lang" 4.1)" = "${here}/runtimes/wasm-${lang}" ] || fail "wasm-${lang} 4.1: $(wasm_version_dir "$lang" 4.1)"
 done
 run cmd_build_wasm rust go
-[ "$(builds_pull "cmd_build_wasm rust go")" = "4" ] || fail "cmd_build_wasm rust go: not four images (4.1 and 4.2 of each)"
+[ "$(builds_pull "cmd_build_wasm rust go")" = "3" ] || fail "cmd_build_wasm rust go: not three images (4.1 and 4.2 of rust, 4.1 of go)"
 echo "ok - ci.sh wasm builds every version of every runtime (from a version's own directory when it has one) with --pull, smoke-tests each and exits 0 after a push"
 
 # wasm exec next to a receiver image built on this host: a local build uses that receiver, the

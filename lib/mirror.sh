@@ -85,8 +85,6 @@ REQS_IMAGES=(
   "rust:1.99.1-slim-bookworm|rust:1.99.1-slim-bookworm"
   "rust:1.95.0-slim-bookworm|rust:1.95.0-slim-bookworm@sha256:d7482085ff5b415f84dba5647ae71606650bdef00db7aeb69f4b3d170c3e4082"
   "rust:1.97.0-slim-bookworm|rust:1.97.0-slim-bookworm@sha256:6d220bf85c74e842a79da63997af8d2e74455c0b8847d8bb3a5888572334991d"
-  # wasm-go 4.2: componentize-go is a glibc binary, the patched Go it names comes with it
-  "debian:bookworm-slim|debian:bookworm-slim"
 
   # ── CUDA base of hf-serve's GPU image (the pytorch / tensorflow GPU runtimes take NVIDIA's pip wheels) ──
   "pytorch:2.14.1-cuda12.6-cudnn9-runtime|pytorch/pytorch:2.14.1-cuda12.6-cudnn9-runtime"

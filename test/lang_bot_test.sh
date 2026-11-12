@@ -195,7 +195,7 @@ for img in wasm-exec wasm-go wasm-js wasm-python wasm-rust; do
 done
 # the versions with a directory of their own (runtimes/wasm-<lang>/4.2/) move with them, their
 # image named once
-for img in wasm-go wasm-js wasm-rust; do
+for img in wasm-js wasm-rust; do
   [ "$(sed -n 's/^ARG SPIN_VERSION=//p' "$repo/runtimes/$img/4.2/Dockerfile")|$(sed -n 's/^ARG SPIN_SHA256_ARM64=//p' "$repo/runtimes/$img/4.2/Dockerfile")" = "${spin_new}|$(sum 'spin arm64')" ] \
     || fail "spin in ${img} 4.2: $(grep '^ARG SPIN' "$repo/runtimes/$img/4.2/Dockerfile")"
 done

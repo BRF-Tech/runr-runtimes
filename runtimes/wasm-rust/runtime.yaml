@@ -6,8 +6,8 @@
 #
 # The versions are SDK generations side by side, each with its own build image, starter and build
 # files: 4.1 is Spin Rust SDK 5 (wasm32-wasip1, a synchronous #[http_component]), 4.2 Spin Rust
-# SDK 8 (wasm32-wasip2, an async #[http_service] on WASIp3; its files in 4.2/). Code of one does
-# not build on the other.
+# SDK 8 (wasm32-wasip2, an async #[http_service] on WASIp3; its files in 4.2/), the default of new
+# projects. Code of one does not build on the other.
 apiVersion: runr.sh/v1
 kind: Runtime
 id: wasm-rust
@@ -20,9 +20,9 @@ category: general
 versions:
   - version: "4.1"
     image: ghcr.io/brf-tech/runr/exec-wasm-rust:4.1
-    default: true
   - version: "4.2"
     image: ghcr.io/brf-tech/runr/exec-wasm-rust:4.2
+    default: true
     template:
       files:
         "{file}": |
