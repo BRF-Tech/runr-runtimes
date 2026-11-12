@@ -193,6 +193,12 @@ for img in wasm-exec wasm-go wasm-js wasm-python wasm-rust; do
   [ "$(arg_of "$img" SPIN_VERSION)|$(arg_of "$img" SPIN_SHA256_AMD64)|$(arg_of "$img" SPIN_SHA256_ARM64)" = "${spin_new}|$(sum 'spin amd64')|$(sum 'spin arm64')" ] \
     || fail "spin in ${img}: $(grep '^ARG SPIN' "$repo/runtimes/$img/Dockerfile")"
 done
+# the versions with a directory of their own (runtimes/wasm-<lang>/4.2/) move with them, their
+# image named once
+for img in wasm-go wasm-js wasm-rust; do
+  [ "$(sed -n 's/^ARG SPIN_VERSION=//p' "$repo/runtimes/$img/4.2/Dockerfile")|$(sed -n 's/^ARG SPIN_SHA256_ARM64=//p' "$repo/runtimes/$img/4.2/Dockerfile")" = "${spin_new}|$(sum 'spin arm64')" ] \
+    || fail "spin in ${img} 4.2: $(grep '^ARG SPIN' "$repo/runtimes/$img/4.2/Dockerfile")"
+done
 # zig: wasm-exec alone; the checksums of ziglang.org's index
 fx https://ziglang.org/download/index.json "{\"${zig_new}\": {\"x86_64-linux\": {\"shasum\": \"$(printf 'a%.0s' {1..64})\"}, \"aarch64-linux\": {\"shasum\": \"$(printf 'b%.0s' {1..64})\"}}}"
 out="$(bash "$bot" wasm-bump zig "$zig_new")" || fail "wasm-bump zig: ${out}"
@@ -207,6 +213,8 @@ old_rust="$(arg_of wasm-rust RUST_VERSION)"
 new_rust="$(next "$old_rust")"
 out="$(bash "$bot" wasm-bump rust "$new_rust")" || fail "wasm-bump rust: ${out}"
 [ "$(jq -c '[.images, .mirror]' <<<"$out")" = "[[\"wasm-rust\"],[\"rust:${new_rust}-slim-bookworm\"]]" ] || fail "wasm-bump rust: ${out}"
+[ "$(sed -n 's/^ARG RUST_VERSION=//p' "$repo/runtimes/wasm-rust/4.2/Dockerfile")" = "$new_rust" ] \
+  || fail "rust in wasm-rust 4.2: $(grep '^ARG RUST' "$repo/runtimes/wasm-rust/4.2/Dockerfile")"
 grep -qxF "  \"rust:${new_rust}-slim-bookworm|rust:${new_rust}-slim-bookworm\"" "$repo/lib/mirror.sh" && ! grep -qF "\"rust:${old_rust}-slim-bookworm|" "$repo/lib/mirror.sh" \
   || fail "rust's mirror line: $(grep 'rust:' "$repo/lib/mirror.sh")"
 [ "$(grep -c '"rust:' "$repo/lib/mirror.sh")" = "$(grep -c '"rust:' "$here/lib/mirror.sh")" ] || fail "rust's other mirror lines changed"

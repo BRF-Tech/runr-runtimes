@@ -48,6 +48,9 @@ Some rules:
   [README.md](README.md#a-new-runtime-without-a-runr-release).
 - **A new version.** When installs should get the change as a new version, raise the version with
   it: the wrapper's `const version`, hf-serve's `__version__`, or a WebAssembly runtime's `version`.
+  A WebAssembly SDK major that changes the code functions are written in is a version next to the
+  old one, in a directory of its own (`runtimes/wasm-<lang>/<version>/`, its starter and build
+  files in `runtime.yaml`): see [README.md](README.md#webassembly-versions).
 - **A new upstream release** of a language (a patch release, a new version) is published only after
   the language bot tested it: it lists it in `runtimes/<runtime>/tested-versions`. Leave that file to
   the bot ([README.md](README.md#the-language-bot)); a person's urgent patch goes through the patch

@@ -473,7 +473,13 @@ Reported by ci.sh watch."
 
 # watch_arg NAME — the value of ARG NAME in the WebAssembly Dockerfiles (the highest, when they differ)
 watch_arg() {
-  sed -n "s/^ARG $1=\([0-9][0-9.]*\)$/\1/p" "${RUNTIMES_DIR:-${SCRIPT_DIR}/runtimes}"/wasm-*/Dockerfile | sort -V | tail -n 1
+  local dir="${RUNTIMES_DIR:-${SCRIPT_DIR}/runtimes}" file
+  # every version's Dockerfile: runtimes/wasm-<lang>/ and runtimes/wasm-<lang>/<version>/
+  for file in "$dir"/wasm-*/Dockerfile "$dir"/wasm-*/*/Dockerfile; do
+    if [ -f "$file" ]; then
+      sed -n "s/^ARG $1=\([0-9][0-9.]*\)$/\1/p" "$file"
+    fi
+  done | sort -V | tail -n 1
 }
 
 # watch_github REPO — the tag of the newest release of a GitHub repository

@@ -40,12 +40,22 @@ for manifest in "$here"/runtimes/*/runtime.yaml; do
 
   case "$id" in
     wasm-*)
-      version="$(wasm_runtime_version "${id#wasm-}")"
-      [ -n "$version" ] || fail "${id}: no version"
-      grep -qE "^[[:space:]]+image:[[:space:]]*\"?ghcr\.io/brf-tech/runr/exec-${id}:${version}\"?[[:space:]]*$" "$manifest" \
-        || fail "${id}: version ${version} is not ghcr.io/brf-tech/runr/exec-${id}:${version}"
-      [ "$(grep -c '^ARG SPIN_VERSION=' "${dir}/Dockerfile")" = 1 ] && grep -qxF "ARG SPIN_VERSION=${SPIN_VERSION}" "${dir}/Dockerfile" \
-        || fail "${id}: the Dockerfile does not pin the Spin CLI of wasm-exec (${SPIN_VERSION}): $(grep '^ARG SPIN_VERSION=' "${dir}/Dockerfile" || echo none)"
+      versions="$(wasm_runtime_versions "${id#wasm-}")"
+      [ -n "$versions" ] || fail "${id}: no version"
+      # every version: its image is exec-<id>:<version>, its Dockerfile (the version's own directory
+      # or the runtime's) pins wasm-exec's Spin CLI
+      for version in $versions; do
+        grep -qE "^[[:space:]]+image:[[:space:]]*\"?ghcr\.io/brf-tech/runr/exec-${id}:${version}\"?[[:space:]]*$" "$manifest" \
+          || fail "${id}: version ${version} is not ghcr.io/brf-tech/runr/exec-${id}:${version}"
+        vdir="$(wasm_version_dir "${id#wasm-}" "$version")"
+        [ "$(grep -c '^ARG SPIN_VERSION=' "${vdir}/Dockerfile")" = 1 ] && grep -qxF "ARG SPIN_VERSION=${SPIN_VERSION}" "${vdir}/Dockerfile" \
+          || fail "${id} ${version}: the Dockerfile does not pin the Spin CLI of wasm-exec (${SPIN_VERSION}): $(grep '^ARG SPIN_VERSION=' "${vdir}/Dockerfile" || echo none)"
+      done
+      # a directory with a Dockerfile (a version's: 4.2/) belongs to a version of the manifest
+      for vdir in "$dir"/*/; do
+        [ -f "${vdir}Dockerfile" ] || continue
+        [[ $'\n'"${versions}"$'\n' == *$'\n'"$(basename "$vdir")"$'\n'* ]] || fail "${id}: $(basename "$vdir")/ is not a version of runtime.yaml"
+      done
       ;;
     *)
       grep -qE "^[[:space:]]+repository:[[:space:]]*ghcr\.io/brf-tech/runr/exec-${id}[[:space:]]*$" "$manifest" \

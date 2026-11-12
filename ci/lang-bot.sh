@@ -386,14 +386,20 @@ cmd_wasm_bump() {
     sum_arm64="$(sha_of "$arm64" "$version")" || return 2
   fi
   old=""
-  for file in "${ROOT}"/runtimes/wasm-*/Dockerfile; do
+  # every version's Dockerfile: runtimes/wasm-<lang>/ and the versions with a directory of their own
+  # (runtimes/wasm-<lang>/<version>/); the image key is the runtime's, once
+  local image
+  for file in "${ROOT}"/runtimes/wasm-*/Dockerfile "${ROOT}"/runtimes/wasm-*/*/Dockerfile; do
+    [ -f "$file" ] || continue
     grep -qE "^ARG ${arg}=" "$file" || continue
     old="$(sed -n "s/^ARG ${arg}=//p" "$file" | head -n 1)"
     sed -i -E "s/^ARG ${arg}=.*/ARG ${arg}=${version}/" "$file"
     if [ "$sha" != "-" ]; then
       sed -i -E "s/^ARG ${sha}_AMD64=.*/ARG ${sha}_AMD64=${sum_amd64}/; s/^ARG ${sha}_ARM64=.*/ARG ${sha}_ARM64=${sum_arm64}/" "$file"
     fi
-    images+=("$(basename "$(dirname "$file")")")
+    image="${file#"${ROOT}"/runtimes/}"
+    image="${image%%/*}"
+    [[ " ${images[*]-} " == *" ${image} "* ]] || images+=("$image")
   done
   [ "${#images[@]}" -gt 0 ] || { echo "no Dockerfile of runtimes/wasm-* has ARG ${arg}" >&2; return 1; }
   if [ "$reqs" != "-" ]; then
