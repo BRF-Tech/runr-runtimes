@@ -15,9 +15,10 @@ The rules are the ones RunR's API applies when it bundles the same manifests
   - YAML as the YAML 1.2 core schema reads it: only true/false are booleans, only ~/null/empty
     are null, numbers are decimal (0o / 0x prefixes for octal / hex), dates and everything else
     stay strings; a duplicate key or a key that is not a string is an error
-  - a "@file" value of build.files (a string, or each variant of an object such as
-    {http: "@a.go", schedule: "@b.go"}) is replaced by the content of that file, relative to
-    the manifest's directory (and inside it), CRLF turned into LF
+  - a "@file" value of build.files or of a version's build.files (a string, or each variant of an
+    object such as {http: "@a.go", schedule: "@b.go"}) is replaced by the content of that file,
+    relative to the manifest's directory (and inside it, a subdirectory such as "@4.2/go.mod"
+    too), CRLF turned into LF
   - "files": only for a runtime with a version that names a dockerfile; every regular file of
     its directory but runtime.yaml (not recursive), CRLF turned into LF; RunR builds the image in
     each region from them
@@ -184,10 +185,16 @@ def runtime_entry(manifest_path, prefix):
         raise BuildError("%s: the id is %s, not the directory's name %s"
                          % (path, json.dumps(manifest.get("id")), runtime_id))
 
-    build = manifest.get("build")
-    if isinstance(build, dict) and isinstance(build.get("files"), dict):
+    builds = [("build.files", manifest.get("build"))]
+    versions = manifest.get("versions")
+    if isinstance(versions, list):
+        builds += [("versions[%d].build.files" % i, v.get("build"))
+                   for i, v in enumerate(versions) if isinstance(v, dict)]
+    for label, build in builds:
+        if not isinstance(build, dict) or not isinstance(build.get("files"), dict):
+            continue
         for name, content in build["files"].items():
-            where = "%s build.files.%s" % (path, name)
+            where = "%s %s.%s" % (path, label, name)
             if isinstance(content, dict):
                 build["files"][name] = {k: inline(v, directory, where) for k, v in content.items()}
             else:

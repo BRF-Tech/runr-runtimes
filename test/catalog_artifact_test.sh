@@ -73,6 +73,22 @@ jq -e '[.runtimes[] | select(has("files"))] | length == 0' "$tmp/real.json" >/de
   = "$(cat "$here/runtimes/go/wrapper_schedule.go")" ] || fail "go: @wrapper_schedule.go not inlined"
 [ "$(jq -r '.runtimes[] | select(.manifest.id == "wasm-go") | .manifest.build.files["spin.toml"]' "$tmp/real.json")" \
   = "$(cat "$here/runtimes/wasm-go/spin.toml")" ] || fail "wasm-go: @spin.toml not inlined"
+# a version's own build files (versions[].build.files, "@4.2/…" in the version's directory): the
+# files its image was built with (wasm-js's build compares package.json with the image's)
+for spec in wasm-rust:Cargo.toml wasm-rust:spin.toml wasm-js:package.json wasm-js:build.mjs wasm-js:spin.toml; do
+  id="${spec%%:*}" file="${spec#*:}"
+  [ "$(jq -r --arg id "$id" --arg f "$file" '.runtimes[] | select(.manifest.id == $id) | .manifest.versions[] | select(.version == "4.2") | .build.files[$f]' "$tmp/real.json")" \
+    = "$(cat "$here/runtimes/${id}/4.2/${file}")" ] || fail "${id} 4.2: @4.2/${file} not inlined"
+done
+# the starter of a version with its own (versions[].template): Rust 4.2, not JavaScript 4.2
+[ "$(jq -c '[.runtimes[] | select(.manifest.id | startswith("wasm-")) | .manifest.id as $id | .manifest.versions[] | select(has("template")) | "\($id) \(.version)"]' "$tmp/real.json")" \
+  = '["wasm-rust 4.2"]' ] || fail "the versions with a template of their own"
+# the default of new projects: 4.2 of Rust and JavaScript, 4.1 of the others (wasm-go 4.2 waits
+# for WASIp3 in a Go release)
+[ "$(jq -c '[.runtimes[] | select(.manifest.id | startswith("wasm-")) | .manifest.id as $id | .manifest.versions[] | select(.default == true) | "\($id) \(.version)"]' "$tmp/real.json")" \
+  = '["wasm-exec 4.1","wasm-go 4.1","wasm-js 4.2","wasm-python 4.1","wasm-rust 4.2"]' ] || fail "the default versions of the WebAssembly runtimes"
+jq -e '.runtimes[] | select(.manifest.id == "wasm-rust") | .manifest.versions[] | select(.version == "4.2") | .template.files["{file}"] | contains("#[http_service]")' "$tmp/real.json" >/dev/null \
+  || fail "wasm-rust 4.2: its starter is not an #[http_service]"
 [ "$(jq '[.. | strings | select(startswith("@"))] | length' "$tmp/real.json")" = 0 ] || fail "an @file reference left"
 # the quoted version stays a string, numbers and booleans stay what they are
 [ "$(jq -c '.runtimes[] | select(.manifest.id == "wasm-go") | [.manifest.versions[0].version, .manifest.versions[0].default, .manifest.resources.memory_mb, .manifest.resources.cpu]' "$tmp/real.json")" \

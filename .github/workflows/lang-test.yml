@@ -270,12 +270,14 @@ jobs:
           read -ra names <<< "${images//wasm-/}"
           ./ci.sh wasm "${names[@]}"
           : > "$RUNNER_TEMP/result/candidates"
+          # every version of the image (4.1, and 4.2 of the runtimes that have it), as ci.sh wasm built them
           for name in $images; do
-            version="$(awk '/^[[:space:]]*-[[:space:]]*version:/ { v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); gsub(/["'"'"' ]/, "", v); print v; exit }' "runtimes/${name}/runtime.yaml")"
-            candidate="${CANDIDATES}/exec-${name}:${version}-${RUNTIME}-${FULL}"
-            docker tag "ghcr.io/brf-tech/runr/exec-${name}:${version}" "$candidate"
-            docker push -q "$candidate"
-            echo "${candidate} ghcr.io/brf-tech/runr/exec-${name}:${version}" >> "$RUNNER_TEMP/result/candidates"
+            while IFS= read -r version; do
+              candidate="${CANDIDATES}/exec-${name}:${version}-${RUNTIME}-${FULL}"
+              docker tag "ghcr.io/brf-tech/runr/exec-${name}:${version}" "$candidate"
+              docker push -q "$candidate"
+              echo "${candidate} ghcr.io/brf-tech/runr/exec-${name}:${version}" >> "$RUNNER_TEMP/result/candidates"
+            done < <(awk '/^[[:space:]]*-[[:space:]]*version:/ { v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); gsub(/["'"'"' ]/, "", v); print v }' "runtimes/${name}/runtime.yaml")
           done
       # this repository's tests, as ci.yml runs them, on the change
       - name: Shell tests, Dockerfile and reqs mirror checks
