@@ -46,7 +46,8 @@ REQS_IMAGES=(
   "nginx:1.27-alpine|nginx:1.27-alpine"
 
   # ── Region ingress: the image of the pinned Traefik chart (KnativeConstants::TRAEFIK_IMAGE), and
-  #    the one before it, which regions run until region:reconcile moves them ──
+  #    the ones before it, which regions run until region:reconcile moves them ──
+  "traefik:v3.7.18|traefik:v3.7.18"
   "traefik:v3.7.17|traefik:v3.7.17"
   "traefik:v3.7.4|traefik:v3.7.4"
 
