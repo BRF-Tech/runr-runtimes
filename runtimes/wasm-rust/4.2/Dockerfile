@@ -6,7 +6,7 @@
 # function. Version 4.1 (Spin Rust SDK 5, wasm32-wasip1) is built from runtimes/wasm-rust/.
 #
 #   docker build -t ghcr.io/brf-tech/runr/exec-wasm-rust:4.2 runtimes/wasm-rust/4.2     (or: ci.sh wasm)
-ARG RUST_VERSION=1.99.1
+ARG RUST_VERSION=1.100.0
 FROM ghcr.io/brf-tech/runr/reqs/rust:${RUST_VERSION}-slim-bookworm
 
 # The RUN steps only, not the image: a docker-container BuildKit builder gives them
