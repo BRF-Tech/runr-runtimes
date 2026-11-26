@@ -70,9 +70,9 @@ REQS_IMAGES=(
 
   # ── Dockerfile base images ──
   # the API's FrankenPHP base: the floating tag, and the exact tag RunR pins (FRANKENPHP_TAG of
-  # its api/Dockerfile*), FrankenPHP 1.13.6 on PHP 8.3.37
+  # its api/Dockerfile*), FrankenPHP 1.14.0 on PHP 8.3.37
   "frankenphp:1-php8.3-alpine|dunglas/frankenphp:1-php8.3-alpine"
-  "frankenphp:1.13.6-php8.3-alpine|dunglas/frankenphp:1.13.6-php8.3-alpine"
+  "frankenphp:1.14.0-php8.3-alpine|dunglas/frankenphp:1.14.0-php8.3-alpine"
   "composer:latest|composer:latest"
   "composer:2.7|composer:2.7"
   "php:8.3-fpm-alpine|php:8.3-fpm-alpine"
