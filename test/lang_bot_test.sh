@@ -236,10 +236,10 @@ grep -qxF "  \"tinygo:${tinygo_new}|tinygo/tinygo:${tinygo_new}\"" "$repo/lib/mi
 old_rust="$(arg_of wasm-rust RUST_VERSION)"
 new_rust="$(next "$old_rust")"
 out="$(bash "$bot" wasm-bump rust "$new_rust")" || fail "wasm-bump rust: ${out}"
-[ "$(jq -c '[.images, .mirror]' <<<"$out")" = "[[\"wasm-rust\"],[\"rust:${new_rust}-slim-bookworm\"]]" ] || fail "wasm-bump rust: ${out}"
+[ "$(jq -c '[.images, .mirror]' <<<"$out")" = "[[\"wasm-rust\"],[\"rust:${new_rust}-slim-trixie\"]]" ] || fail "wasm-bump rust: ${out}"
 [ "$(sed -n 's/^ARG RUST_VERSION=//p' "$repo/runtimes/wasm-rust/4.2/Dockerfile")" = "$new_rust" ] \
   || fail "rust in wasm-rust 4.2: $(grep '^ARG RUST' "$repo/runtimes/wasm-rust/4.2/Dockerfile")"
-grep -qxF "  \"rust:${new_rust}-slim-bookworm|rust:${new_rust}-slim-bookworm\"" "$repo/lib/mirror.sh" && ! grep -qF "\"rust:${old_rust}-slim-bookworm|" "$repo/lib/mirror.sh" \
+grep -qxF "  \"rust:${new_rust}-slim-trixie|rust:${new_rust}-slim-trixie\"" "$repo/lib/mirror.sh" && ! grep -qF "\"rust:${old_rust}-slim-trixie|" "$repo/lib/mirror.sh" \
   || fail "rust's mirror line: $(grep 'rust:' "$repo/lib/mirror.sh")"
 [ "$(grep -c '"rust:' "$repo/lib/mirror.sh")" = "$(grep -c '"rust:' "$here/lib/mirror.sh")" ] || fail "rust's other mirror lines changed"
 # a download it cannot check (no fixture) changes nothing; a tool it does not know is refused

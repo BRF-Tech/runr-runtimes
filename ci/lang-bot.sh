@@ -170,7 +170,7 @@ TOOLCHAIN_DEFS=(
   "componentize-py|COMPONENTIZE_PY_VERSION|-|-|-|-|"
   "spin-sdk|SPIN_SDK_VERSION|-|-|-|-|"
   "tinygo|TINYGO_VERSION|-|-|-|tinygo:{V}=tinygo/tinygo:{V}|test-images"
-  "rust|RUST_VERSION|-|-|-|rust:{V}-slim-bookworm=rust:{V}-slim-bookworm|test-wasm"
+  "rust|RUST_VERSION|-|-|-|rust:{V}-slim-trixie=rust:{V}-slim-trixie|test-wasm"
 )
 
 newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]; }

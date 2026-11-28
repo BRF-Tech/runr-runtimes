@@ -5,7 +5,7 @@
 #
 #   docker build -t ghcr.io/brf-tech/runr/exec-wasm-js:4.1 runtimes/wasm-js     (or: ci.sh wasm)
 ARG NODE_VERSION=22
-FROM ghcr.io/brf-tech/runr/reqs/node:${NODE_VERSION}-bookworm-slim
+FROM ghcr.io/brf-tech/runr/reqs/node:${NODE_VERSION}-trixie-slim
 
 # The RUN steps only, not the image: a docker-container BuildKit builder gives them
 # OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=unix:///dev/otel-grpc.sock, which Spin's telemetry rejects

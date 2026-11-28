@@ -7,7 +7,7 @@
 #
 #   docker build -t ghcr.io/brf-tech/runr/exec-wasm-rust:4.2 runtimes/wasm-rust/4.2     (or: ci.sh wasm)
 ARG RUST_VERSION=1.100.0
-FROM ghcr.io/brf-tech/runr/reqs/rust:${RUST_VERSION}-slim-bookworm
+FROM ghcr.io/brf-tech/runr/reqs/rust:${RUST_VERSION}-slim-trixie
 
 # The RUN steps only, not the image: a docker-container BuildKit builder gives them
 # OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=unix:///dev/otel-grpc.sock, which Spin's telemetry rejects

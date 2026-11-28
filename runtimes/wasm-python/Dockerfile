@@ -5,7 +5,7 @@
 #
 #   docker build -t ghcr.io/brf-tech/runr/exec-wasm-python:4.1 runtimes/wasm-python     (or: ci.sh wasm)
 ARG PYTHON_VERSION=3.13
-FROM ghcr.io/brf-tech/runr/reqs/python:${PYTHON_VERSION}-slim-bookworm
+FROM ghcr.io/brf-tech/runr/reqs/python:${PYTHON_VERSION}-slim-trixie
 
 # The RUN steps only, not the image: a docker-container BuildKit builder gives them
 # OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=unix:///dev/otel-grpc.sock, which Spin's telemetry rejects

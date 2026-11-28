@@ -503,7 +503,7 @@ watch_wasm() {
       github:*) raw="$(watch_github "${source#github:}")" || raw="" ;;
       pypi:*) raw="$(watch_pypi "${source#pypi:}")" || raw="" ;;
       zig) raw="$(watch_get "https://ziglang.org/download/index.json" | jq -r 'keys[] | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' | sort -V | tail -n 1)" || raw="" ;;
-      hub:*) raw="$(watch_hub_tags "${source#hub:}" | sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)-slim-bookworm$/\1/p' | sort -V | tail -n 1)" || raw="" ;;
+      hub:*) raw="$(watch_hub_tags "${source#hub:}" | sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)-slim-trixie$/\1/p' | sort -V | tail -n 1)" || raw="" ;;
     esac
     latest="${raw#v}"
     latest="${latest#wasi-sdk-}"

@@ -85,16 +85,15 @@ REQS_IMAGES=(
   "golang:1.26-alpine|golang:1.26-alpine"
   "golang:1.27-alpine|golang:1.27-alpine"
 
-  # ── WebAssembly build images (runtimes/wasm-*) and the Spin shim's Rust toolchain
-  #    (runtime/wasm-shim-spin of BRF-Tech/runr, pinned by digest) ──
+  # ── WebAssembly build images (runtimes/wasm-*: Debian 13, trixie, since 2026-11-28) and the Spin
+  #    shim's Rust toolchain (runtime/wasm-shim-spin of BRF-Tech/runr, pinned by digest);
+  #    python:3.13-slim-bookworm is RunR's sandbox CLI test's (SANDBOX_CLI_PYTHON_IMAGE of
+  #    runtime/lib/test-sandbox-api.sh) ──
   "tinygo:0.44.0|tinygo/tinygo:0.44.0"
-  "node:22-bookworm-slim|node:22-bookworm-slim"
-  "python:3.13-slim-bookworm|python:3.13-slim-bookworm"
-  "rust:1.100.0-slim-bookworm|rust:1.100.0-slim-bookworm"
-  # the same on Debian 13 (trixie), the base the WebAssembly build images move to
   "node:22-trixie-slim|node:22-trixie-slim"
   "python:3.13-slim-trixie|python:3.13-slim-trixie"
   "rust:1.100.0-slim-trixie|rust:1.100.0-slim-trixie"
+  "python:3.13-slim-bookworm|python:3.13-slim-bookworm"
   "rust:1.95.0-slim-bookworm|rust:1.95.0-slim-bookworm@sha256:d7482085ff5b415f84dba5647ae71606650bdef00db7aeb69f4b3d170c3e4082"
   "rust:1.97.0-slim-bookworm|rust:1.97.0-slim-bookworm@sha256:6d220bf85c74e842a79da63997af8d2e74455c0b8847d8bb3a5888572334991d"
 

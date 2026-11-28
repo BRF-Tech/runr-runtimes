@@ -113,7 +113,7 @@ fx https://api.github.com/repos/bytecodealliance/wasm-tools/releases/latest '{"t
 fx https://ziglang.org/download/index.json '{"master": {}, "0.15.1": {}, "0.16.0": {}}'
 fx https://pypi.org/pypi/componentize-py/json '{"info": {"version": "0.25.1"}}'
 fx https://pypi.org/pypi/spin-sdk/json '{"info": {"version": "5.0.0"}}'
-hub library/rust 1.98.1-slim-bookworm 1.99.0-slim-bookworm 1.99.0-alpine 2.0.0-beta-slim-bookworm
+hub library/rust 1.98.1-slim-trixie 1.99.0-slim-trixie 1.99.0-alpine 2.0.0-beta-slim-trixie 1.99.9-slim-bookworm
 # the base-image series of the reqs mirror (WATCH_REQS_FILE): alpine 3.21, Debian bookworm (12),
 # node 22, python 3.13, golang 1.25; upstream alpine 3.23 (3.24 without a release yet), Debian 13
 # (14 without a point release), node 24 (25 odd, 26 without a release), python 3.16 (3.17 a
