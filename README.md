@@ -289,12 +289,20 @@ each row's report.
 - **A language version.** The base images are mirrored first, then `exec-<runtime>:<X.Y>` is built
   for it and smoke-tested (`ci.sh build <runtime> --version=X.Y`), and this repository's tests run.
   The image is pushed as `ghcr.io/brf-tech/runr/candidates/exec-<runtime>:<X.Y.Z>`, a package
-  RunR never discovers by itself. RunR's main e2e (`runtime/ci.sh test` of its last release, on
-  Kind) then runs with that image as the only version of that runtime, and its xaas and faas cases
-  deploy functions on it (`ci/lang-bot.sh catalog`, `check-e2e`). A runtime RunR's last release
-  does not have yet (Java, .NET, Ruby and Bun before RunR 0.6.8) cannot be deployed there: the bot
-  reports the suite as skipped, and the build and smoke test decide, until RunR's next release
-  brings the runtime.
+  RunR never discovers by itself (`ci/lang-bot.sh push`: pushed again when GHCR refuses the first
+  push of a new package, three times at most). RunR's main e2e (`runtime/ci.sh test` of its last
+  release, on Kind) then runs with that image, named by its digest, as the only version of that
+  runtime, and its xaas and faas cases deploy functions on it (`ci/lang-bot.sh catalog`,
+  `check-e2e`). By its digest: RunR runs a version's tag as the newest patch of the signed patch
+  feed, by that patch's digest in the image's repository, which the candidates' repository does
+  not have (MANIFEST_UNKNOWN in the e2e cluster's registry, ImagePullBackOff on its nodes); a
+  reference by digest is never patched. RunR's shell case (`exec-ws-shell`) of releases up to 0.7.9
+  runs on the first ready HTTP function, a dotnet candidate's, whose chiseled image has no shell:
+  when that case is the suite's only failure on such a runtime, the suite counts as passed with a
+  note (`ci/lang-bot.sh shell-less`), and `check-e2e` still decides on the candidate's own cases.
+  A runtime RunR's last release does not have yet (Java, .NET, Ruby and Bun before RunR 0.6.8)
+  cannot be deployed there: the bot reports the suite as skipped, and the build and smoke test
+  decide, until RunR's next release brings the runtime.
 - **A new Bun minor.** Bun supports only its newest release. When a new minor passes, the bot also
   deprecates every published version below it, from that day, with a sunset 13 weeks later
   (`versionDiscovery.lifecycle` of `runtimes/bun/runtime.yaml`, `ci/lang-bot.sh lifecycle`):
