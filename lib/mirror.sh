@@ -39,6 +39,9 @@ REQS_IMAGES=(
   # ── Utility (Knative pods, init containers, sidecars, CaaS test image) ──
   "alpine:3.20|alpine:3.20"
   "alpine:3.21|alpine:3.21"
+  # the newest Alpine series (3.24, 2026-11), ready for RunR's references to it (its utility
+  # images name 3.20 and 3.21: BRF-Tech/runr moves them)
+  "alpine:3.24|alpine:3.24"
   "redis:7-alpine|redis:7-alpine"
   "caddy:2-alpine|caddy:2-alpine"
   "curl:latest|curlimages/curl:latest"
@@ -88,6 +91,10 @@ REQS_IMAGES=(
   "node:22-bookworm-slim|node:22-bookworm-slim"
   "python:3.13-slim-bookworm|python:3.13-slim-bookworm"
   "rust:1.100.0-slim-bookworm|rust:1.100.0-slim-bookworm"
+  # the same on Debian 13 (trixie), the base the WebAssembly build images move to
+  "node:22-trixie-slim|node:22-trixie-slim"
+  "python:3.13-slim-trixie|python:3.13-slim-trixie"
+  "rust:1.100.0-slim-trixie|rust:1.100.0-slim-trixie"
   "rust:1.95.0-slim-bookworm|rust:1.95.0-slim-bookworm@sha256:d7482085ff5b415f84dba5647ae71606650bdef00db7aeb69f4b3d170c3e4082"
   "rust:1.97.0-slim-bookworm|rust:1.97.0-slim-bookworm@sha256:6d220bf85c74e842a79da63997af8d2e74455c0b8847d8bb3a5888572334991d"
 
@@ -99,6 +106,9 @@ REQS_IMAGES=(
   "node:22-slim|node:22-slim"
   # the mcp-node runtime template of RunR 0.7.0 (every platform: the tag had linux/amd64 only)
   "node:24-slim|node:24-slim"
+  # the newest Node.js LTS and Python series (2026-11), ready for RunR's build bases to move to
+  "node:26-slim|node:26-slim"
+  "python:3.15-slim|python:3.15-slim"
 
   # ── CI images ──
   "docker:27|docker:27"
