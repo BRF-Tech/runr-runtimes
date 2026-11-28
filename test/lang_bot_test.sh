@@ -79,13 +79,15 @@ for v in "$spin_old" "$tinygo_old" "$zig_old" "$maven_old" "$plugin_old" "$torch
 done
 spin_new="$(next "$spin_old")" tinygo_new="$(next "$tinygo_old")" zig_new="$(next "$zig_old")"
 maven_new="$(next "$maven_old")" plugin_new="$(next "$plugin_old")" torch_new="$(next "$torch_old")"
-# tested-versions and Bun's manifest as the bot may find them: the header alone (Java: one version
-# the test keeps), no lifecycle
+# tested-versions and Bun's and PHP's manifests as the bot may find them: the header alone (Java:
+# one version the test keeps), no lifecycle
 tested_fixture() { grep '^#' "$here/runtimes/$1/tested-versions"; shift; [ "$#" = 0 ] || printf '%s\n' "$@"; }
 no_lifecycle() { awk '/^versionDiscovery:/ { vd = 1 } vd && /^[^ #]/ && !/^versionDiscovery:/ { vd = 0 } vd && /^  lifecycle:/ { lc = 1; next } lc && /^    / { next } { lc = 0; print }' "$1"; }
 tested_fixture python > "$repo/runtimes/python/tested-versions"
 tested_fixture java "21.0 21.0.13" > "$repo/runtimes/java/tested-versions"
 no_lifecycle "$here/runtimes/bun/runtime.yaml" > "$repo/runtimes/bun/runtime.yaml"
+# PHP's manifest as it was before the bot deprecated 8.2 (the plan deprecates a version once)
+no_lifecycle "$here/runtimes/php/runtime.yaml" > "$repo/runtimes/php/runtime.yaml"
 
 # --- the plan ---------------------------------------------------------------------------------------
 cat > "$tmp/rows.json" <<'EOF'
@@ -508,6 +510,7 @@ cp -r "$here/ci" "$here/lib" "$work/"
 tested_fixture python > "$work/runtimes/python/tested-versions"
 tested_fixture bun "1.4 1.4.4" > "$work/runtimes/bun/tested-versions"
 no_lifecycle "$here/runtimes/bun/runtime.yaml" > "$work/runtimes/bun/runtime.yaml"
+no_lifecycle "$here/runtimes/php/runtime.yaml" > "$work/runtimes/php/runtime.yaml"
 (cd "$work" && git add -A && git commit -q -m base && git remote add origin "$origin" && git push -q origin main)
 tested="$(git -C "$work" rev-parse HEAD)"
 dir="$tmp/lang"
