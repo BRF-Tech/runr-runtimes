@@ -10,7 +10,7 @@
 #     repository's tests, then RunR's main e2e on the newest version;
 #   - an ML runtime (pytorch, tensorflow): the framework pin moved, the CPU image built and
 #     smoke-tested, this repository's tests, then RunR's main e2e with its ML case (--ml) on it; a
-#     torch without a wheel for the -gpu image's CUDA is held: its issue closed, nobody asked, the
+#     torch without a wheel for the -gpu image's CUDA is held: its row "held", nobody asked, the
 #     CPU and GPU images stay on their pin together;
 #   - a WebAssembly toolchain (spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk,
 #     rust): its ARG and download checksums moved (rust, tinygo: their mirrored base image too),
@@ -129,7 +129,8 @@ jobs:
             echo "runr-tag=${tag}"
             echo "weekly=$(jq -r '.issue // empty' "$RUNNER_TEMP/rows.json")"
           } >> "$GITHUB_OUTPUT"
-      # the rows this run takes: testing (a test, an archive) or superseded, in the weekly issue
+      # the rows this run takes: testing (a test, an archive, a deprecation) or superseded, in the
+      # weekly issue
       - name: The weekly issue
         if: steps.plan.outputs.weekly != ''
         env:
@@ -240,7 +241,7 @@ jobs:
           echo "$version" > "$RUNNER_TEMP/result/version"
       # an ML framework: the pin moved, the CPU image built, smoke-tested and pushed as the candidate.
       # A release without a wheel for the -gpu image's CUDA is held (ml-bump exit 4): nothing built,
-      # the land closes its issue, the CPU and GPU images stay on their pin together
+      # the land marks its row held, the CPU and GPU images stay on their pin together
       - name: Move the pin, build, smoke test and push the candidate (ML)
         if: matrix.kind == 'ml'
         run: |

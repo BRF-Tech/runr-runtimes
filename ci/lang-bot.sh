@@ -34,7 +34,7 @@
 #       built on the CUDA wheel index of the -gpu image (Dockerfile.gpu), tensorflow-cpu with
 #       tensorflow[and-cuda]. Exit 4, held: the release has no wheel on that CUDA index (torch, or
 #       every torchvision that admits it); the CPU and GPU images stay on their pin together and
-#       nobody is asked (the land closes the issue as held). Exit 2: no torchvision admits it
+#       nobody is asked (the land marks its row held). Exit 2: no torchvision admits it
 #   ci/lang-bot.sh wasm-bump TOOL VERSION
 #       a toolchain of the WebAssembly images moved to VERSION in this checkout: its ARG in every
 #       Dockerfile that has it, the SHA256 of its downloads (Spin, wasi-sdk, wasm-tools: of the
@@ -888,7 +888,7 @@ cmd_land() {
 # archive-one DIR INDEX RUN_URL — the archive of one version of DIR/archive.json past its end of
 # life (cmd_land runs it), its actions in DIR/actions.d/archive-INDEX: the registry first (the image
 # as eol-<version>, the floating tag gone: eol_archive_image of lib/eol.sh, or LANG_ARCHIVE_IMAGE,
-# a command the tests answer with), then the records on main (archive), the issue closed
+# a command the tests answer with), then the records on main (archive), its row archived
 cmd_archive_one() {
   local dir="${1:?usage: lang-bot.sh archive-one DIR INDEX RUN_URL}" i="${2:?}" run_url="${3:?}"
   local entry row runtime version eol digest actions comment sha body patches repo
