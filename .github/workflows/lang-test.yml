@@ -470,8 +470,18 @@ jobs:
             rc=0
             suite 2>&1 | tee -a "$RUNNER_TEMP/e2e.log" || rc=$?
           fi
-          [ "$rc" = 0 ] || exit "$rc"
           shopt -s nullglob
+          # RunR's shell case on the function of a runtime without a shell, its only failure: not
+          # the candidate's (lang-bot.sh shell-less); check-e2e below decides on its own cases
+          if [ "$rc" != 0 ] && [ "$BOT_KIND" = language ]; then
+            for f in api/storage/e2e-results-*.md; do
+              if note="$(bash ../runtimes-repo/ci/lang-bot.sh shell-less "$f" "$E2E_RUNTIME")"; then
+                echo "$note" | tee -a "$RUNNER_TEMP/e2e.log" > "$RUNNER_TEMP/result/note"
+                rc=0
+              fi
+            done
+          fi
+          [ "$rc" = 0 ] || exit "$rc"
           for f in api/storage/e2e-results-*.md; do
             cat "$f" >> "$GITHUB_STEP_SUMMARY"
             rc=0

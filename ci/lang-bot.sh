@@ -81,6 +81,12 @@
 #   ci/lang-bot.sh check-e2e RESULTS.md RUNTIME VERSION [--ml]
 #       the e2e's results show the xaas cases of RUNTIME at VERSION (--ml: its ML case), and none
 #       of them failed
+#   ci/lang-bot.sh shell-less RESULTS.md RUNTIME
+#       the e2e's only failed case is RunR's shell case (exec-ws-shell) and RUNTIME's functions run
+#       on an image without a shell (NO_SHELL: exec-dotnet's chiseled run image): RunR's release
+#       (up to 0.7.9) runs that case on the first ready HTTP function, the candidate's when its
+#       runtime sorts before Python, where it cannot pass and says nothing of the candidate (runs
+#       43823418468, 46132781808: dotnet 10.0.15, 11.0.0). Prints why; exit 1: any other result
 #   ci/lang-bot.sh upstream LOG
 #       the lines (at most 5) of a test job's LOG that show an outage, not the release's fault:
 #       an upstream server's HTTP 500, 502, 503 or 504 of a public https URL on a line that says
@@ -140,6 +146,9 @@ SCRIPT_DIR="$ROOT"
 source "${ROOT}/lib/common.sh"
 LANGUAGES=" $(runtime_ids) "
 ML=" pytorch tensorflow "
+# the language runtimes whose functions run on an image without a shell: exec-dotnet's on
+# Microsoft's chiseled runtime-deps image (build.runImage of runtimes/dotnet/runtime.yaml)
+NO_SHELL=" dotnet "
 
 # A tool a language image pins: TOOL|image (a language runtime)|ARG|checksum ARG (- none)|download,
 # {V} the version (- none)|RunR suites. A download's SHA-512 is checked against <download>.sha512.
@@ -686,6 +695,15 @@ cmd_check_e2e() {
   echo "the ${prefix} cases of ${runtime} ${version} ran on the candidate image and passed"
 }
 
+cmd_shell_less() {
+  local results="${1:?usage: lang-bot.sh shell-less RESULTS.md RUNTIME}" runtime="${2:?}" failed
+  [ -f "$results" ] || { echo "no e2e results (${results})" >&2; return 1; }
+  [[ "$NO_SHELL" == *" ${runtime} "* ]] || return 1
+  failed="$(awk '/^## Failures/ { on = 1; next } on && /^## / { exit } on && /^- \*\*/ { s = $0; sub(/^- \*\*/, "", s); sub(/\*\*.*$/, "", s); print s }' "$results" | sort -u | paste -sd ' ' -)"
+  [ "$failed" = exec-ws-shell ] || return 1
+  echo "exec-ws-shell failed on the ${runtime} function: its image has no shell (Microsoft's chiseled runtime-deps); RunR's release runs its shell case on the first ready HTTP function, which is the candidate's"
+}
+
 cmd_upstream() {
   local log="${1:?usage: lang-bot.sh upstream LOG}"
   [ -f "$log" ] || return 1
@@ -1052,6 +1070,7 @@ cmd_land_one() {
       continue
     fi
     [ ! -f "$dir/results/${name}/retried" ] || note="${note} (run once more after an outage)"
+    [ ! -f "$dir/results/${name}/note" ] || note="${note} ($(head -n 1 "$dir/results/${name}/note"))"
     [ -z "$(upstream_of "$dir" "$name")" ] || note="${note} (an outage)"
     lines="${lines}"$'\n'"- RunR's \`ci.sh ${suite}\` on the candidate: ${rc}${note}"
     case "$rc" in success|skipped) ;; *) failed="${failed:+${failed} }e2e-${suite}" ;; esac
@@ -1275,6 +1294,7 @@ case "$command" in
   push) cmd_push "$@" ;;
   catalog) cmd_catalog "$@" ;;
   check-e2e) cmd_check_e2e "$@" ;;
+  shell-less) cmd_shell_less "$@" ;;
   upstream) cmd_upstream "$@" ;;
   runr-pins) cmd_runr_pins "$@" ;;
   land) cmd_land "$@" ;;

@@ -407,13 +407,26 @@ bash "$bot" check-e2e "$tmp/results.md" tensorflow 2.22 --ml >/dev/null 2>&1 && 
 cp "$tmp/results.md" "$tmp/results-ok.md"
 printf '\n## Failures\n\n- **faas-python-3.16-http** [ready]: timed out\n- **ml-pytorch-2.15-http** [verify]: HTTP 500\n' >> "$tmp/results.md"
 bash "$bot" check-e2e "$tmp/results.md" python 3.16 >/dev/null 2>&1 && fail "check-e2e: a failure passed"
+# RunR's shell case alone failed, on the function of a runtime without a shell (exec-dotnet's
+# chiseled run image, run 46132781808): not the candidate's; on another runtime, or next to another
+# failure, it is
+printf '%s
+' '## Results' '' '| xaas-dotnet-10.0-http | ✓ | ✓ | ✓ | ✓ | 44s |' '' '## Failures' '' '- **exec-ws-shell** [verify]: Shell: marker not found in: ' '' '## Slowest' > "$tmp/shell.md"
+out="$(bash "$bot" shell-less "$tmp/shell.md" dotnet)" && [[ "$out" == "exec-ws-shell failed on the dotnet function: its image has no shell"* ]] || fail "shell-less: ${out}"
+bash "$bot" shell-less "$tmp/shell.md" python >/dev/null && fail "shell-less on a runtime with a shell"
+printf '%s
+' '- **xaas-dotnet-10.0-queue** [ready]: Timeout (300s)' >> "$tmp/shell.md"
+sed -i 's/^## Slowest$//' "$tmp/shell.md"
+awk '/^## Failures/ { print; getline; print; print "- **xaas-dotnet-10.0-queue** [ready]: Timeout (300s)"; next } { print }' "$tmp/shell.md" > "$tmp/shell2.md"
+bash "$bot" shell-less "$tmp/shell2.md" dotnet >/dev/null && fail "shell-less next to another failure"
+bash "$bot" shell-less "$tmp/results-ok.md" dotnet >/dev/null && fail "shell-less without a failure"
 bash "$bot" check-e2e "$tmp/results.md" pytorch 2.15 --ml >/dev/null 2>&1 && fail "check-e2e --ml: a failure passed"
 [ "$(bash "$bot" runr-pins "$runr" nodejs)" = discovered ] || fail "runr-pins of a discovered runtime"
 rc=0; bash "$bot" runr-pins "$runr" wasm-rust >/dev/null || rc=$?
 [ "$rc" = 2 ] || fail "runr-pins of a pinned runtime: exit ${rc}"
 rc=0; bash "$bot" runr-pins "$runr" ruby >/dev/null || rc=$?
 [ "$rc" = 3 ] || fail "runr-pins of a runtime RunR's release does not have: exit ${rc}"
-echo "ok - RunR: the catalog offers the candidate alone, by its digest (never a tag), the e2e check finds its cases (an ML runtime's ML case) and failures, a discovered runtime has no pins"
+echo "ok - RunR: the catalog offers the candidate alone, by its digest (never a tag), the e2e check finds its cases (an ML runtime's ML case) and failures, the shell case alone on a runtime without a shell is none of them, a discovered runtime has no pins"
 
 # --- the candidate's push ---------------------------------------------------------------------------
 # docker and crane on PATH answer as the registry did: GHCR refused the first push of a new package
@@ -534,6 +547,7 @@ result python-3.16-build success
 echo "ghcr.io/brf-tech/runr/candidates/exec-python@sha256:$(printf '%064d' 3)" > "$dir/results/lang-result-python-3.16-build/image"
 printf '3.13\n3.15\n' > "$dir/results/lang-result-python-3.16-build/published"
 result python-3.16-e2e-test success
+echo "a note of the suite" > "$dir/results/lang-result-python-3.16-e2e-test/note"
 result python-3.13-build success
 result python-3.13-e2e-test failure
 printf '%s\n' '── Failures ──' '  ✗ xaas-python-3.13-http [ready]: Timeout (300s)' '  ✗ faas-python-3.13-http [version]: Build failed: error building image' '' '── Slowest ──' \
@@ -644,7 +658,7 @@ has_row python-3.16.0 published && [[ "$(note_of python-3.16.0)" == "main $(git 
 # python 3.13: red, its row names RunR's failed cases, its report has the end of the log
 has_row python-3.13.10 "needs attention" && [ "$(note_of python-3.13.10)" = "e2e-test: failed: xaas-python-3.13-http [ready], faas-python-3.13-http [version]" ] || fail "red: ${actions}"
 grep -qF 'the end of the python-3.13-e2e-test log' "$dir/comments/python-3.13.10.md" || fail "red: the log: $(cat "$dir/comments/python-3.13.10.md")"
-grep -qF 'nothing to move' "$dir/comments/python-3.16.0.md" || fail "green: RunR's pins: $(cat "$dir/comments/python-3.16.0.md")"
+grep -qF 'nothing to move' "$dir/comments/python-3.16.0.md" && grep -qF 'test` on the candidate: success (a note of the suite)' "$dir/comments/python-3.16.0.md"   || fail "green: RunR's pins, the suite's note: $(cat "$dir/comments/python-3.16.0.md")"
 has_row nodejs-24.23.0 "needs attention" && [ "$(note_of nodejs-24.23.0)" = "e2e-test: no log (the job did not get that far)" ] \
   && grep -qF 'test` on the candidate: no result' "$dir/comments/nodejs-24.23.0.md" || fail "no e2e result: ${actions} $(cat "$dir/comments/nodejs-24.23.0.md" 2>/dev/null)"
 grep -qF 'test-ml` on the candidate: skipped (RunR v0.6.7 has no ML case yet' "$dir/comments/pytorch-${torch_new}.md" || fail "ml: the skipped suite: $(cat "$dir/comments/pytorch-${torch_new}.md")"
