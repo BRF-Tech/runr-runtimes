@@ -22,7 +22,7 @@
 #   - tested-versions gets one line per version, in order, the header kept;
 #   - an archived version (past its end of life) gets its record in archived-versions, leaves
 #     tested-versions and exec-php's fixed releases, and its end of life in the lifecycle;
-#   - a lifecycle entry (deprecated today, its sunset 13 weeks later) goes into
+#   - a lifecycle entry (deprecated today, its sunset 13 weeks later or the date given) goes into
 #     versionDiscovery.lifecycle once per version;
 #   - a candidate is pushed again when the registry refuses it (three times at most) and named by
 #     its digest, the only form RunR's catalog of the e2e takes (a tag runs the published version's
@@ -42,7 +42,8 @@
 #     by the next run (a second outage in a row asks a person), a version whose runtime changed on
 #     main since the tested commit is left for the next run, a held ML release is held, a version
 #     past its end of life is archived (its records on main, its row archived) and one whose
-#     registry step fails asks a person;
+#     registry step fails asks a person, one near it deprecated (its sunset the end of life, its
+#     row held until then);
 #   - the five green toolchains of run 43020609005 (rust, spin, tinygo, wasm-tools, zig) on one
 #     base all land, a patch whose lines moved made again on the new main; one made again with
 #     other lines waits for the next run, and one the bot cannot land is reported while the others
@@ -129,21 +130,24 @@ plan="$(bash "$bot" plan "$tmp/rows.json")"
 [ "$(jq -c '[.tests[] | select(.outage) | .row]' <<<"$plan")" = '["zig-0.17.1"]' ] || fail "the outage's second chance: $(jq -c .tests <<<"$plan")"
 [ "$(jq -c '[.superseded[] | [.row, .by]] | sort' <<<"$plan")" = '[["maven-3.9.17","maven-3.9.18"],["python-3.13.9","python-3.13.10"],["spin-4.1.1","spin-4.2.0"]]' ] || fail "superseded: $(jq -c .superseded <<<"$plan")"
 [ "$(jq -c .attention <<<"$plan")" = '[]' ] || fail "attention: $(jq -c .attention <<<"$plan")"
-for r in nodejs-24.23.0 php-8.3.28 python-3.16 base-alpine-3.24 cobol-3.5.0 maven-3.9 php-8.2-eol go-1.25-eol pytorch-2.14.1 ruby-4.0.9; do
+for r in nodejs-24.23.0 php-8.3.28 python-3.16 base-alpine-3.24 cobol-3.5.0 maven-3.9 go-1.25-eol pytorch-2.14.1 ruby-4.0.9; do
   jq -e --arg r "$r" '.skipped[] | select(.row == $r)' <<<"$plan" >/dev/null || fail "${r} not skipped: $plan"
 done
 [ "$(jq -r '.skipped[] | select(.row == "base-alpine-3.24") | .reason' <<<"$plan")" = "a person's decision: the bot does not test a base image's series" ] \
   && [ "$(jq -r '.skipped[] | select(.row == "pytorch-2.14.1") | .reason' <<<"$plan")" = "done already (held)" ] || fail "the reasons: $(jq -c .skipped <<<"$plan")"
 # an end of life whose date is past is archived (python 3.10); one still ahead, or today's, is a
-# notice for people until then (php 8.2, go 1.25)
+# notice for people until then, the version deprecated in the catalog once (php 8.2; go 1.25 has
+# its lifecycle entry)
 [ "$(jq -c .archive <<<"$plan")" = '[{"row":"python-3.10-eol","runtime":"python","version":"3.10","eol":"2026-10-31"}]' ] || fail "the archive: $(jq -c .archive <<<"$plan")"
+[ "$(jq -c .deprecate <<<"$plan")" = '[{"row":"php-8.2-eol","runtime":"php","version":"8.2","eol":"2026-12-31"}]' ] || fail "the deprecation: $(jq -c .deprecate <<<"$plan")"
+[ "$(jq -r '.skipped[] | select(.row == "go-1.25-eol") | .reason' <<<"$plan")" = "an end-of-life notice, for people until its date (deprecated in the catalog)" ] || fail "go 1.25: $(jq -c .skipped <<<"$plan")"
 # the rows the plan takes, as updates of the weekly issue
-[ "$(bash "$bot" plan-updates <(echo "$plan") https://example.test/run/8 | jq -c '[.[] | [.key, .state]] | sort')" = '[["bun-1.5.0","testing"],["componentize-py-0.26.0","testing"],["java-25.0.6","testing"],["maven-3.9.17","superseded"],["maven-3.9.18","testing"],["maven-dependency-plugin-3.12.0","testing"],["python-3.10-eol","testing"],["python-3.13.10","testing"],["python-3.13.9","superseded"],["python-3.16.0","testing"],["pytorch-2.15.0","testing"],["spin-4.1.1","superseded"],["spin-4.2.0","testing"],["tinygo-0.43.0","testing"],["zig-0.17.1","testing"]]' ] \
+[ "$(bash "$bot" plan-updates <(echo "$plan") https://example.test/run/8 | jq -c '[.[] | [.key, .state]] | sort')" = '[["bun-1.5.0","testing"],["componentize-py-0.26.0","testing"],["java-25.0.6","testing"],["maven-3.9.17","superseded"],["maven-3.9.18","testing"],["maven-dependency-plugin-3.12.0","testing"],["php-8.2-eol","testing"],["python-3.10-eol","testing"],["python-3.13.10","testing"],["python-3.13.9","superseded"],["python-3.16.0","testing"],["pytorch-2.15.0","testing"],["spin-4.1.1","superseded"],["spin-4.2.0","testing"],["tinygo-0.43.0","testing"],["zig-0.17.1","testing"]]' ] \
   || fail "plan-updates: $(bash "$bot" plan-updates <(echo "$plan") https://example.test/run/8)"
 bash "$bot" plan-updates <(echo "$plan") https://example.test/run/8 | jq -e 'all(.[]; .run == "https://example.test/run/8") and (.[] | select(.key == "maven-3.9.17") | .note | contains("by `maven-3.9.18`"))' >/dev/null \
   || fail "plan-updates: the run and the superseding row"
 plan="$(bash "$bot" plan "$tmp/rows.json" --only=nodejs-24.23.0)"
-[ "$(jq -c '[.tests[].row]' <<<"$plan")" = '["nodejs-24.23.0"]' ] && [ "$(jq -c .retrigger <<<"$plan")" = '["nodejs-24.23.0"]' ] && [ "$(jq -c .archive <<<"$plan")" = '[]' ] || fail "--only: $plan"
+[ "$(jq -c '[.tests[].row]' <<<"$plan")" = '["nodejs-24.23.0"]' ] && [ "$(jq -c .retrigger <<<"$plan")" = '["nodejs-24.23.0"]' ] && [ "$(jq -c '[.archive, .deprecate]' <<<"$plan")" = '[[],[]]' ] || fail "--only: $plan"
 [ "$(bash "$bot" plan "$tmp/rows.json" --only=python-3.10-eol | jq -c '[.archive[].row]')" = '["python-3.10-eol"]' ] || fail "--only of an end of life"
 # a plain list of rows is a plan's input too
 [ "$(jq '.rows' "$tmp/rows.json" | bash "$bot" plan /dev/stdin | jq -c '[.tests[].row] | length')" = 11 ] || fail "a list of rows"
@@ -305,9 +309,15 @@ if python3 -c 'import yaml' 2>/dev/null; then
   python3 -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); assert d["versionDiscovery"]["lifecycle"] == {"1.4": {"deprecated": "2026-11-07", "sunset": "2027-02-06"}, "1.5": {"deprecated": "2026-12-01", "sunset": "2027-03-02"}}, d' "$y" \
     || fail "the lifecycle does not read as RunR reads it"
 fi
+# a version near its end of life: deprecated today, its sunset the end of life
+cp "$y" "$tmp/bun.yaml"
+out="$(LANG_TODAY=2026-11-28 bash "$bot" lifecycle bun 1.6 2026-12-31)" || fail "lifecycle with a sunset: ${out}"
+[ "$out" = "1.6: deprecated 2026-11-28, sunset 2026-12-31" ] && grep -qxF '    "1.6": {deprecated: "2026-11-28", sunset: "2026-12-31"}' "$y" || fail "lifecycle with a sunset: ${out} $(cat "$y")"
+cp "$tmp/bun.yaml" "$y"
+bash "$bot" lifecycle bun 1.6 2026-12 >/dev/null 2>&1 && fail "a sunset that is no date"
 bash "$bot" lifecycle wasm-rust 4.1 >/dev/null 2>&1 && fail "a lifecycle entry without versionDiscovery"
 bash "$bot" lifecycle bun 1 >/dev/null 2>&1 && fail "a lifecycle entry of a version that is no X.Y"
-echo "ok - lifecycle: deprecated today, the sunset 13 weeks later, once per version, in versionDiscovery.lifecycle"
+echo "ok - lifecycle: deprecated today, the sunset 13 weeks later (or the date given), once per version, in versionDiscovery.lifecycle"
 
 # --- archive: a version past its end of life --------------------------------------------------------
 digest_of() { printf 'sha256:%064d' "$1"; }
@@ -480,7 +490,7 @@ git init -q --bare -b main "$origin"
 work="$tmp/work"
 git init -q -b main "$work"
 mkdir -p "$work/runtimes"
-for rt in python bun java pytorch wasm-exec wasm-go wasm-rust; do cp -r "$here/runtimes/$rt" "$work/runtimes/"; done
+for rt in python bun java php pytorch wasm-exec wasm-go wasm-rust; do cp -r "$here/runtimes/$rt" "$work/runtimes/"; done
 cp -r "$here/ci" "$here/lib" "$work/"
 tested_fixture python > "$work/runtimes/python/tested-versions"
 tested_fixture bun "1.4 1.4.4" > "$work/runtimes/bun/tested-versions"
@@ -509,6 +519,8 @@ cat > "$dir/archive.json" <<'EOF'
 [{"row": "python-3.10-eol", "runtime": "python", "version": "3.10", "eol": "2026-10-01"},
  {"row": "go-1.25-eol", "runtime": "go", "version": "1.25", "eol": "2026-08-19"}]
 EOF
+# php 8.2: its end of life near, deprecated (the manifest without a lifecycle entry of it)
+echo '[{"row": "php-8.2-eol", "runtime": "php", "version": "8.2", "eol": "2026-12-31"}]' > "$dir/deprecate.json"
 # the registry's side (eol_archive_image of lib/eol.sh, tested by test/eol_test.sh): the digest the
 # floating tag named, kept as eol-<version>
 cat > "$tmp/archive-image" <<'EOF'
@@ -580,7 +592,8 @@ echo "the images keep their version, which RunR v0.6.7 pins (WASM_RUNTIME_VERSIO
 (cd "$work" && LANG_TODAY=2026-11-07 LANG_BOT_NAME="$bot_name" LANG_BOT_EMAIL="$bot_email" LANG_ARCHIVE_IMAGE="$tmp/archive-image" bash ci/lang-bot.sh land "$dir" https://example.test/run/9) > "$tmp/out" 2>&1 \
   || fail "land: $(cat "$tmp/out")"
 log="$(git --git-dir="$origin" log --format='%an <%ae>|%cn <%ce>|%s' main)"
-[ "$(head -n 7 <<<"$log")" = "${bot_id}|${bot_id}|chore(python): python 3.10 archived, end of life 2026-10-01
+[ "$(head -n 8 <<<"$log")" = "${bot_id}|${bot_id}|chore(php): php 8.2 deprecated, end of life 2026-12-31
+${bot_id}|${bot_id}|chore(python): python 3.10 archived, end of life 2026-10-01
 ${bot_id}|${bot_id}|fix(java): maven ${maven_new} (was ${maven_old})
 ${bot_id}|${bot_id}|feat(bun): bun 1.5 (1.5.0)
 ${bot_id}|${bot_id}|fix(wasm): tinygo ${tinygo_new} (was ${tinygo_old})
@@ -588,7 +601,8 @@ ${bot_id}|${bot_id}|fix(pytorch): torch ${torch_new}, torchvision 0.30.0
 ${bot_id}|${bot_id}|feat(python): python 3.16 (3.16.0)
 someone <someone@example.test>|someone <someone@example.test>|base" ] || fail "main: ${log}"
 # each of the bot's commits says it is the bot's: RunR-Lang-Bot: <name> <version>
-[ "$(git --git-dir="$origin" log -6 --format='%(trailers:key=RunR-Lang-Bot,valueonly,separator=%x2C)' main | grep -v '^$')" = "python 3.10
+[ "$(git --git-dir="$origin" log -7 --format='%(trailers:key=RunR-Lang-Bot,valueonly,separator=%x2C)' main | grep -v '^$')" = "php 8.2
+python 3.10
 maven ${maven_new}
 bun 1.5.0
 tinygo ${tinygo_new}
@@ -618,13 +632,14 @@ actions="$(cat "$dir/actions")"
 # row KEY STATE: the action of a row (its note after it)
 has_row() { grep -qF "$(printf 'row\t%s\t%s\t' "$1" "$2")" <<<"$actions"; }
 note_of() { awk -F '\t' -v k="$1" '$1 == "row" && $2 == k { print $4 }' <<<"$actions"; }
-has_row python-3.16.0 published && [[ "$(note_of python-3.16.0)" == "main $(git --git-dir="$origin" rev-parse main~5 | cut -c1-12); the publish workflow publishes python" ]] \
+has_row python-3.16.0 published && [[ "$(note_of python-3.16.0)" == "main $(git --git-dir="$origin" rev-parse main~6 | cut -c1-12); the publish workflow publishes python" ]] \
   || fail "green: ${actions}"
 # the actions are rows and the one publish, nothing for an issue of its own
 [ -z "$(grep -vE "$(printf '^(row|publish)\t')" <<<"$actions")" ] || fail "other actions: ${actions}"
 # one publish, the last action, for main as the run left it: every image the landed tests touched,
-# once, in the order they landed (python, pytorch, tinygo's wasm-exec and wasm-go, bun, maven's java)
-[ "$(grep -c "$(printf '^publish\t')" <<<"$actions")" = 1 ] && [ "$(tail -n 1 <<<"$actions")" = "$(printf 'publish\tpython,pytorch,wasm-exec,wasm-go,bun,java')" ] \
+# once, in the order they landed (python, pytorch, tinygo's wasm-exec and wasm-go, bun, maven's java,
+# the deprecated php's catalog)
+[ "$(grep -c "$(printf '^publish\t')" <<<"$actions")" = 1 ] && [ "$(tail -n 1 <<<"$actions")" = "$(printf 'publish\tpython,pytorch,wasm-exec,wasm-go,bun,java,php')" ] \
   || fail "one publish of the landed images: ${actions}"
 # python 3.13: red, its row names RunR's failed cases, its report has the end of the log
 has_row python-3.13.10 "needs attention" && [ "$(note_of python-3.13.10)" = "e2e-test: failed: xaas-python-3.13-http [ready], faas-python-3.13-http [version]" ] || fail "red: ${actions}"
@@ -662,8 +677,13 @@ grep -qF 'the second run in a row' "$dir/comments/rust-1.99.1.md" && grep -qF 't
 # wasm-tools: red, its row and its report say the log is empty instead of an empty block
 has_row wasm-tools-1.263.0 "needs attention" && [ "$(note_of wasm-tools-1.263.0)" = "build: the log is empty" ] \
   && grep -qF 'the log is empty' "$dir/comments/wasm-tools-1.263.0.md" || fail "an empty log: ${actions} $(cat "$dir/comments/wasm-tools-1.263.0.md")"
+# php 8.2: deprecated on main, its sunset the end of life; its row held until then
+git --git-dir="$origin" show main:runtimes/php/runtime.yaml | grep -qxF '    "8.2": {deprecated: "2026-11-07", sunset: "2026-12-31"}' \
+  || fail "main's php lifecycle: $(git --git-dir="$origin" show main:runtimes/php/runtime.yaml | sed -n '/^versionDiscovery/,/^handler/p')"
+has_row php-8.2-eol held && [[ "$(note_of php-8.2-eol)" == "deprecated in the catalog from 2026-11-07, sunset 2026-12-31; main "*"; the bot archives the version after its end of life" ]] \
+  && grep -qF '**Deprecated: php 8.2** (end of life 2026-12-31)' "$dir/comments/php-8.2-eol.md" || fail "the deprecation: ${actions} $(cat "$dir/comments/php-8.2-eol.md" 2>/dev/null)"
 # a row's note is one line
-[ "$(grep -c "$(printf '^row\t')" <<<"$actions")" = 13 ] || fail "13 rows: ${actions}"
+[ "$(grep -c "$(printf '^row\t')" <<<"$actions")" = 14 ] || fail "14 rows: ${actions}"
 for c in "$dir"/comments/*.md; do
   if awk 'prev == "```" && $0 == "```" { found = 1 } { prev = $0 } END { exit !found }' "$c"; then fail "an empty block in $(basename "$c"): $(cat "$c")"; fi
 done
@@ -672,6 +692,8 @@ echo "ok - landing: green versions, tool and ML pins and toolchains on main as f
 # main changed the runtime since the tested commit: left for the next run
 (cd "$work" && git fetch -q origin && git checkout -q --detach origin/main && echo "# changed" >> runtimes/python/Dockerfile && git commit -q -am "python: a change" && git push -q origin HEAD:refs/heads/main)
 echo '[]' > "$dir/archive.json"
+# php 8.2 deprecated already (main has its lifecycle entry): its row held, nothing committed
+echo '[{"row": "php-8.2-eol", "runtime": "php", "version": "8.2", "eol": "2026-12-31"}]' > "$dir/deprecate.json"
 cat > "$dir/tests.json" <<'EOF'
 [{"row": "python-3.17.0", "kind": "language", "runtime": "python", "version": "3.17", "full": "3.17.0", "key": "python-3.17", "suites": ["test"]}]
 EOF
@@ -683,6 +705,7 @@ before="$(git --git-dir="$origin" rev-parse main)"
 grep -qF 'main changed `runtimes/python/`' "$dir/comments/python-3.17.0.md" && grep -qF "$(printf 'row\tpython-3.17.0\tnew\tpassed on ')" "$dir/actions" \
   || fail "the report: $(cat "$dir/comments/python-3.17.0.md" "$dir/actions")"
 grep -q "$(printf '^publish\t')" "$dir/actions" && fail "a publish with nothing landed: $(cat "$dir/actions")"
+grep -qF "$(printf 'row\tphp-8.2-eol\theld\tdeprecated in the catalog already')" "$dir/actions" || fail "deprecated again: $(cat "$dir/actions")"
 echo "ok - a version whose runtime changed on main since the tested commit is left for the next run"
 
 # --- several green toolchains of one run, all on one base (run 43020609005) -----------------------

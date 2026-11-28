@@ -18,7 +18,7 @@
 #     there (ci/weekly.sh rows, update, apply), never a comment or a label of a per-finding issue;
 #     the bot commits with Burak's identity and its trailer (RunR-Lang-Bot: <name> <version>); an
 #     ML release without its CUDA wheel is held; the land job archives the versions past their end
-#     of life;
+#     of life and deprecates the ones near it;
 #   - the publish workflow holds an untested language version (LANG_GATE), every language runtime
 #     has its tested-versions.
 #
@@ -137,6 +137,8 @@ grep -qE 'packages: *write' <<<"$(job "$lt" land)" && grep -qF 'ARCHIVE: ${{ nee
   && grep -qF 'bash ci/fetch.sh "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/' <<<"$(job "$lt" land)" \
   && grep -qF "needs.plan.outputs.any-archive == 'true'" <<<"$(job "$lt" land)" || fail "lang-test.yml's land job does not archive the end-of-life versions"
 grep -qF 'LANG_ARCHIVE_IMAGE' "$lt" && fail "lang-test.yml replaces the registry step of the archive (LANG_ARCHIVE_IMAGE is the tests')"
+# a version near its end of life: deprecated by the land job (its lifecycle entry on main)
+grep -qF 'DEPRECATE: ${{ needs.plan.outputs.deprecate }}' <<<"$(job "$lt" land)" && grep -qF 'echo "${DEPRECATE:-[]}" > "$RUNNER_TEMP/lang/deprecate.json"' <<<"$(job "$lt" land)"   && grep -qF "needs.plan.outputs.any-deprecate == 'true'" <<<"$(job "$lt" land)" || fail "lang-test.yml's land job does not deprecate the versions near their end of life"
 # the one push: HEAD:refs/heads/main of this repository, a fast-forward
 bot="$here/ci/lang-bot.sh"
 gitcmd='^[^#]*(^|[^A-Za-z_-])git( -[cC] [^ ]+)*'

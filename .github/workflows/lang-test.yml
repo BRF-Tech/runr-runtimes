@@ -34,7 +34,9 @@
 # outage in a row: "needs attention"). Several green tests land one after the other on the moving main
 # (ci/lang-bot.sh land), each commit with the trailer "RunR-Lang-Bot: <name> <version>", and the
 # publish workflow starts once for all of them. An open row "lang: <runtime> <X.Y> end of life
-# <date>" whose date is past is archived by the land job, nobody asked: the image the floating tag named
+# <date>" is deprecated in the catalog by the land job of the first run that sees it (its sunset the
+# end of life, versionDiscovery.lifecycle), and archived once its date is past, nobody asked: the
+# image the floating tag named
 # stays as exec-<runtime>:eol-<X.Y> with its patch tags, the floating tag goes (RunR no longer
 # offers the version; its projects stay locked as end-of-life, running deployments keep their
 # image by digest), the records go onto main (runtimes/<runtime>/archived-versions) and the row is
@@ -84,6 +86,8 @@ jobs:
       any-e2e: ${{ steps.plan.outputs.any-e2e }}
       archive: ${{ steps.plan.outputs.archive }}
       any-archive: ${{ steps.plan.outputs.any-archive }}
+      deprecate: ${{ steps.plan.outputs.deprecate }}
+      any-deprecate: ${{ steps.plan.outputs.any-deprecate }}
       runr-tag: ${{ steps.plan.outputs.runr-tag }}
       weekly: ${{ steps.plan.outputs.weekly }}
     steps:
@@ -118,6 +122,9 @@ jobs:
             # the versions past their end of life the land job archives
             echo "archive=$(jq -c .archive "$RUNNER_TEMP/plan.json")"
             echo "any-archive=$(jq -r '.archive | length > 0' "$RUNNER_TEMP/plan.json")"
+            # the versions near their end of life the land job deprecates (their sunset that date)
+            echo "deprecate=$(jq -c .deprecate "$RUNNER_TEMP/plan.json")"
+            echo "any-deprecate=$(jq -r '.deprecate | length > 0' "$RUNNER_TEMP/plan.json")"
             echo "runr-tag=${tag}"
             echo "weekly=$(jq -r '.issue // empty' "$RUNNER_TEMP/rows.json")"
           } >> "$GITHUB_OUTPUT"
@@ -498,9 +505,9 @@ jobs:
           retention-days: 14
 
   land:
-    name: Commit green versions, archive end-of-life ones, report on the issues
+    name: Commit green versions, archive and deprecate end-of-life ones, report in the weekly issue
     needs: [plan, build, e2e]
-    if: ${{ always() && (needs.plan.outputs.any == 'true' || needs.plan.outputs.any-archive == 'true') }}
+    if: ${{ always() && (needs.plan.outputs.any == 'true' || needs.plan.outputs.any-archive == 'true' || needs.plan.outputs.any-deprecate == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -571,15 +578,18 @@ jobs:
           done
           rm -rf .runr-release
       # the green tests onto main, then the versions past their end of life archived (the registry,
-      # their records on main, the issue closed: ci/lang-bot.sh land, archive-one)
-      - name: Commit the green ones on main, archive the end-of-life ones
+      # their records on main: ci/lang-bot.sh land, archive-one), then the ones near it deprecated
+      # (their lifecycle on main: deprecate-one)
+      - name: Commit the green ones on main, archive and deprecate the end-of-life ones
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ARCHIVE: ${{ needs.plan.outputs.archive }}
+          DEPRECATE: ${{ needs.plan.outputs.deprecate }}
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "${ARCHIVE:-[]}" > "$RUNNER_TEMP/lang/archive.json"
+          echo "${DEPRECATE:-[]}" > "$RUNNER_TEMP/lang/deprecate.json"
           bash ci/lang-bot.sh land "$RUNNER_TEMP/lang" "$RUN_URL"
       # the results into the rows of the weekly issue (read again: Language releases may have
       # edited it meanwhile), the reports into the run's summary, the one publish

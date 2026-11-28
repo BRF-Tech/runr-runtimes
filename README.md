@@ -258,7 +258,7 @@ is a hidden `<!-- runr-lang:row {…} -->` line, and the body's last line is
 | `published` | green: on `main` (its commit in the note), the publish workflow publishes it |
 | `needs attention` | red: the note says what failed (RunR's failed cases, or the last line of the log that says so), the run's summary has the end of the logs. A person fixes it, then runs Language tests with the row's key; a newer release supersedes it by itself |
 | `upstream outage` | an upstream server's 5xx (or the registry inside RunR's e2e cluster) stopped the test: the next run tests it again by itself; a second outage in a row is `needs attention` |
-| `held` | an ML release without its CUDA wheel (done: nobody acts, a newer release is a new row), or `held until <date>`: an end-of-life notice, archived after its date |
+| `held` | an ML release without its CUDA wheel (done: nobody acts, a newer release is a new row), or `held until <date>`: an end-of-life notice, the version deprecated in the catalog by the first run that sees it and archived after its date |
 | `a person's decision` | a newer series of a base image: done once the watch no longer finds it |
 | `archived` | a version past its end of life, archived |
 | `superseded` | a newer release of the same image replaced it (the bot tests the newest one only) |
@@ -364,8 +364,12 @@ each row's report.
 - **An end of life.** RunR counts down to a version's end of life in its reminders; after it the
   version leaves the picker and its projects can no longer be saved or deployed (running
   deployments are never touched). The `lang: <runtime> <X.Y> end of life <date>` row is a notice
-  until that date (`held until <date>`). The first run after it archives the version, nobody asked (`ci/lang-bot.sh
-  land`, `archive-one`; `lib/eol.sh` `eol_archive_image`): the image the floating tag names stays,
+  until that date (`held until <date>`). The first run of Language tests that sees it deprecates
+  the version in the catalog, nobody asked (`ci/lang-bot.sh land`, `deprecate-one`): from that day
+  in `versionDiscovery.lifecycle` of `runtime.yaml`, its sunset the end of life, so RunR shows it
+  as deprecated (a badge and a notice; the version stays usable) whatever endoflife.date says later;
+  a version with an entry there already keeps it. The first run after the date archives the
+  version, nobody asked (`ci/lang-bot.sh land`, `archive-one`; `lib/eol.sh` `eol_archive_image`): the image the floating tag names stays,
   by its digest, as `exec-<runtime>:eol-<X.Y>` with its patch tags (history); the floating tag
   `<X.Y>` goes (GHCR deletes no tag by itself: it moves onto an empty image of its own, whose
   package version is deleted), so RunR's `executor:sync` no longer offers the version, while its

@@ -5,8 +5,9 @@
 #   ci/lang-bot.sh plan ROWS.json [--only=KEY,…]
 #       which rows of the weekly issue (ci/weekly.sh rows: the findings of `ci.sh watch`) this run
 #       tests: JSON {tests: [{row, kind, runtime, version, full, key, suites, outage}], archive:
-#       [{row, runtime, version, eol}], superseded: [{row, by, version}], retrigger: [row],
-#       skipped: [{row, reason}], attention: []}. row is the row's key (ruby-4.0.10). kind
+#       [{row, runtime, version, eol}], deprecate: [{row, runtime, version, eol}], superseded:
+#       [{row, by, version}], retrigger: [row], skipped: [{row, reason}], attention: []}. row is
+#       the row's key (ruby-4.0.10). kind
 #       "language" (the runtimes of RUNTIME_DEFS
 #       in lib/common.sh: python, nodejs, go, php, java, dotnet, ruby, bun; version is the
 #       major.minor, full the release), "tool" (a tool a language image pins, LANG_TOOL_DEFS:
@@ -16,14 +17,16 @@
 #       rust). suites: RunR's e2e suites the test runs. Of several open rows of one image (a
 #       language version, a tool, an ML runtime, a toolchain) the newest is tested, the older ones
 #       superseded. An end-of-life notice of a language version is for people until its date
-#       (skipped: RunR's reminders count down), archived once the date is past (archive: land,
-#       ci/lang-bot.sh archive); a row that is done (published, archived, superseded, done, held
+#       (RunR's reminders count down): the version is deprecated in the catalog the first run after
+#       the notice, its sunset the end of life (deprecate: land, deprecate-one; a version with an
+#       entry in versionDiscovery.lifecycle already is skipped), and archived once the date is past
+#       (archive: land, ci/lang-bot.sh archive); a row that is done (published, archived, superseded, done, held
 #       without a date) or a person's decision (a base image's series) is not tested, one that
 #       needs attention waits unless the run names it (--only). One an upstream outage stopped is
 #       tested again (outage: true): the run before failed on an upstream server's 5xx alone.
 #   ci/lang-bot.sh plan-updates PLAN.json RUN_URL
-#       the rows a plan takes as updates of the weekly issue (ci/weekly.sh update): each test and
-#       archive "testing", a superseded row "superseded"
+#       the rows a plan takes as updates of the weekly issue (ci/weekly.sh update): each test,
+#       archive and deprecation "testing", a superseded row "superseded"
 #   ci/lang-bot.sh ml-bump RUNTIME VERSION
 #       the framework pin of an ML runtime moved to VERSION in this checkout: torch with the
 #       torchvision pip installs next to it, the newest release whose torch requirement admits it
@@ -44,13 +47,14 @@
 #       published next to it (<download>.sha512). Prints JSON {pin, image, images}
 #   ci/lang-bot.sh tested RUNTIME VERSION FULL
 #       "VERSION FULL" into runtimes/RUNTIME/tested-versions (the publish gate, lib/patch.sh)
-#   ci/lang-bot.sh lifecycle RUNTIME VERSION
-#       VERSION deprecated from today (LANG_TODAY) with its sunset LANG_SUNSET_DAYS later (default
-#       91: 13 weeks, when RunR sends its first reminder), in versionDiscovery.lifecycle of
-#       runtimes/RUNTIME/runtime.yaml; prints "VERSION: deprecated DATE, sunset DATE". Exit 3: the
-#       version has an entry already, which stays. The landing runs it for the published versions
-#       below a new one of a runtime that supports only its newest release (filter newest-minor:
-#       Bun)
+#   ci/lang-bot.sh lifecycle RUNTIME VERSION [SUNSET]
+#       VERSION deprecated from today (LANG_TODAY) with its sunset SUNSET, else LANG_SUNSET_DAYS
+#       later (default 91: 13 weeks, when RunR sends its first reminder), in
+#       versionDiscovery.lifecycle of runtimes/RUNTIME/runtime.yaml; prints "VERSION: deprecated
+#       DATE, sunset DATE". Exit 3: the version has an entry already, which stays. The landing runs
+#       it for the published versions below a new one of a runtime that supports only its newest
+#       release (filter newest-minor: Bun), and for a version whose end of life is near (its sunset
+#       that date: deprecate-one)
 #   ci/lang-bot.sh archive RUNTIME VERSION EOL DIGEST
 #       the records of a version past its end of life EOL whose image DIGEST the registry keeps as
 #       exec-RUNTIME:eol-VERSION (lib/eol.sh eol_archive_image): "VERSION EOL DIGEST" into
@@ -113,7 +117,9 @@
 #       "held") is "held" with the reason, nobody asked. Then every version of DIR/archive.json
 #       past its end of life is archived, each in a process of its own (archive-one): the registry
 #       (the image as eol-<version>, the floating tag gone), its records on main (archive), its row
-#       "archived"; LANG_ARCHIVE_IMAGE replaces the registry step (the tests). DIR/actions: what
+#       "archived"; LANG_ARCHIVE_IMAGE replaces the registry step (the tests). Last, every version
+#       of DIR/deprecate.json is deprecated (deprecate-one): its lifecycle entry on main (lifecycle
+#       with its end of life as the sunset), its row "held" until the end of life. DIR/actions: what
 #       the weekly issue's rows get, one per line (row KEY STATE NOTE, tab-separated: ci/weekly.sh
 #       update), and at the end one publish IMAGES for the main the run left: every image a landed
 #       test or an archive touched, once. DIR/comments/KEY.md: each row's report, with the end of
@@ -218,7 +224,7 @@ cmd_plan() {
   only=" ${only//,/ } "
   local row title state until runtime version kind key full suites def outage today
   local -A newest=() newest_row=()
-  local rows=() tests=() superseded=() retrigger=() skipped=() archive=()
+  local rows=() tests=() superseded=() retrigger=() skipped=() archive=() deprecate=()
   today="${LANG_TODAY:-$(date -u +%Y-%m-%d)}"
   # skip ROW REASON — a row this run does not test
   skip() { skipped+=("$(jq -nc --arg r "$1" --arg why "$2" '{row: $r, reason: $why}')"); }
@@ -242,8 +248,20 @@ cmd_plan() {
       fi
       continue
     fi
+    # one ahead: deprecated in the catalog until then, its sunset the end of life (once: a version
+    # with a lifecycle entry keeps it)
+    if [[ "$title" =~ ^lang:\ ([a-z0-9-]+)\ ([0-9]+\.[0-9]+)\ end\ of\ life\ ([0-9]{4}-[0-9]{2}-[0-9]{2})$ ]] \
+      && [[ "$LANGUAGES" == *" ${BASH_REMATCH[1]} "* ]] && ! has_lifecycle "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"; then
+      if [ "$only" != "  " ] && [[ "$only" != *" ${row} "* ]]; then
+        skip "$row" "not named in this run"
+      else
+        deprecate+=("$(jq -nc --arg row "$row" --arg r "${BASH_REMATCH[1]}" --arg v "${BASH_REMATCH[2]}" --arg d "${BASH_REMATCH[3]}" \
+          '{row: $row, runtime: $r, version: $v, eol: $d}')")
+      fi
+      continue
+    fi
     if [[ "$title" =~ ^lang:\ [a-z0-9-]+\ [0-9.]+\ end\ of\ life ]]; then
-      skip "$row" "an end-of-life notice, for people until its date"
+      skip "$row" "an end-of-life notice, for people until its date (deprecated in the catalog)"
       continue
     fi
     if [[ "$title" == base:* ]]; then
@@ -316,8 +334,22 @@ cmd_plan() {
   done
   jq -nc --argjson tests "$(json_list ${tests[@]+"${tests[@]}"})" --argjson superseded "$(json_list ${superseded[@]+"${superseded[@]}"})" \
     --argjson retrigger "$(json_strings ${retrigger[@]+"${retrigger[@]}"})" --argjson skipped "$(json_list ${skipped[@]+"${skipped[@]}"})" \
-    --argjson archive "$(json_list ${archive[@]+"${archive[@]}"})" \
-    '{tests: ($tests | sort_by(.key)), archive: ($archive | sort_by(.runtime, .version)), superseded: $superseded, retrigger: $retrigger, attention: [], skipped: $skipped}'
+    --argjson archive "$(json_list ${archive[@]+"${archive[@]}"})" --argjson deprecate "$(json_list ${deprecate[@]+"${deprecate[@]}"})" \
+    '{tests: ($tests | sort_by(.key)), archive: ($archive | sort_by(.runtime, .version)), deprecate: ($deprecate | sort_by(.runtime, .version)),
+      superseded: $superseded, retrigger: $retrigger, attention: [], skipped: $skipped}'
+}
+
+# has_lifecycle RUNTIME VERSION — versionDiscovery.lifecycle of runtimes/RUNTIME/runtime.yaml has an
+# entry of VERSION (deprecated, a sunset or its end of life)
+has_lifecycle() {
+  awk -v v="$2" '
+    /^versionDiscovery:/ { vd = 1; next }
+    vd && /^[^ #]/ { vd = 0 }
+    vd && /^  lifecycle:/ { lc = 1; next }
+    lc && !/^    / { lc = 0 }
+    lc && index($0, "    \"" v "\":") == 1 { found = 1 }
+    END { exit !found }
+  ' "${ROOT}/runtimes/$1/runtime.yaml" 2>/dev/null
 }
 
 # plan-updates PLAN.json RUN_URL — the rows the plan takes, as updates of the weekly issue
@@ -327,6 +359,7 @@ cmd_plan_updates() {
   jq -c --arg run "$run_url" '
     [(.tests[] | {key: .row, state: "testing", note: "this run tests it", run: $run}),
      (.archive[] | {key: .row, state: "testing", note: "this run archives it (end of life \(.eol))", run: $run}),
+     ((.deprecate // [])[] | {key: .row, state: "testing", note: "this run deprecates it in the catalog (end of life \(.eol))", run: $run}),
      (.superseded[] | {key: .row, state: "superseded", note: "by `\(.by)`: the bot tests the newest release only", run: $run})]' "$plan"
 }
 
@@ -470,12 +503,13 @@ cmd_tool_bump() {
 }
 
 cmd_lifecycle() {
-  local runtime="${1:?usage: lang-bot.sh lifecycle RUNTIME VERSION}" version="${2:?}" file today sunset out rc=0
+  local runtime="${1:?usage: lang-bot.sh lifecycle RUNTIME VERSION [SUNSET]}" version="${2:?}" file today sunset out rc=0
   [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]] || { echo "${version}: not a version X.Y" >&2; return 1; }
+  [ -z "${3:-}" ] || [[ "$3" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "${3}: not a date" >&2; return 1; }
   file="${ROOT}/runtimes/${runtime}/runtime.yaml"
   grep -q '^versionDiscovery:' "$file" 2>/dev/null || { echo "runtimes/${runtime}/runtime.yaml has no versionDiscovery" >&2; return 1; }
   today="${LANG_TODAY:-$(date -u +%Y-%m-%d)}"
-  sunset="$(date -u -d "${today} + ${LANG_SUNSET_DAYS:-91} days" +%Y-%m-%d)"
+  sunset="${3:-$(date -u -d "${today} + ${LANG_SUNSET_DAYS:-91} days" +%Y-%m-%d)}"
   out="$(mktemp)"
   # the entry at the end of versionDiscovery.lifecycle (the block made when it has none)
   awk -v v="$version" -v entry="    \"${version}\": {deprecated: \"${today}\", sunset: \"${sunset}\"}" '
@@ -786,13 +820,15 @@ cmd_land() {
   : > "$dir/publish.list"
   [ -f "$dir/tests.json" ] || echo '[]' > "$dir/tests.json"
   [ -f "$dir/archive.json" ] || echo '[]' > "$dir/archive.json"
+  [ -f "$dir/deprecate.json" ] || echo '[]' > "$dir/deprecate.json"
   # the bot as it started: the checkout moves along main while it lands
   cp "${BASH_SOURCE[0]}" "$dir/bot/lang-bot.sh"
   export LANG_BOT_ROOT="$ROOT" LANG_BOT_SELF="$dir/bot/lang-bot.sh"
-  # the green tests first, then the versions past their end of life, each in a process of its own
-  for what in land archive; do
+  # the green tests first, then the versions past their end of life, then the ones near it, each in
+  # a process of its own
+  for what in land archive deprecate; do
     list="$dir/tests.json"
-    [ "$what" = land ] || list="$dir/archive.json"
+    [ "$what" = land ] || list="$dir/${what}.json"
     n="$(jq length "$list")"
     for ((i = 0; i < n; i++)); do
       entry="$(jq -c ".[$i]" "$list")"
@@ -813,7 +849,7 @@ cmd_land() {
       git reset -q --hard 2>/dev/null || true
       git clean -fdq 2>/dev/null || true
       {
-        echo "**Needs attention: the bot could not $([ "$what" = land ] && echo land || echo archive) ${name}** (\`ci/lang-bot.sh ${what}\`, exit ${rc}). Nothing of it was committed; the other rows of the run were handled and reported."
+        echo "**Needs attention: the bot could not ${what} ${name}** (\`ci/lang-bot.sh ${what}\`, exit ${rc}). Nothing of it was committed; the other rows of the run were handled and reported."
         echo ""
         echo '```'
         tail -n 30 "$log"
@@ -821,7 +857,7 @@ cmd_land() {
         echo ""
         echo "Run: ${run_url}. Fix the bot (or do it by hand), then run **Actions → Language tests → Run workflow** with the row's key (\`${row}\`)."
       } > "$dir/comments/${row}.md"
-      row_line "$row" "needs attention" "the bot could not $([ "$what" = land ] && echo land || echo archive) it (ci/lang-bot.sh ${what}, exit ${rc}): the run's summary has its log" >> "$dir/actions"
+      row_line "$row" "needs attention" "the bot could not ${what} it (ci/lang-bot.sh ${what}, exit ${rc}): the run's summary has its log" >> "$dir/actions"
     done
   done
   # one publish for main as the run left it, with every image a landed test (or an archive) touched:
@@ -900,6 +936,63 @@ EOF
     echo "Run: ${run_url}."
   } > "$comment"
   row_line "$row" archived "${repo}:${ARCHIVE_TAG_PREFIX}${version} (${digest:0:19}…), the floating tag gone; main ${sha:0:12}" >> "$actions.tmp"
+  printf 'publish\t%s\n' "$runtime" >> "$actions.tmp"
+  mv "$actions.tmp" "$actions"
+}
+
+# deprecate-one DIR INDEX RUN_URL — the deprecation of one version of DIR/deprecate.json, whose end
+# of life is near (cmd_land runs it), its actions in DIR/actions.d/deprecate-INDEX: from today in
+# versionDiscovery.lifecycle, its sunset the end of life (RunR shows the badge, the version leaves
+# the picker after the date as it does at its end of life), committed on main; its row held until
+# the date, when the bot archives it
+cmd_deprecate_one() {
+  local dir="${1:?usage: lang-bot.sh deprecate-one DIR INDEX RUN_URL}" i="${2:?}" run_url="${3:?}"
+  local entry row runtime version eol actions comment note sha body rc=0
+  entry="$(jq -c ".[$i]" "$dir/deprecate.json")"
+  row="$(jq -r .row <<< "$entry")"; runtime="$(jq -r .runtime <<< "$entry")"
+  version="$(jq -r .version <<< "$entry")"; eol="$(jq -r .eol <<< "$entry")"
+  actions="$dir/actions.d/deprecate-${i}"
+  comment="$dir/comments/${row}.md"
+  : > "$actions.tmp"
+  git fetch -q origin main
+  git reset -q --hard
+  git checkout -q --detach origin/main
+  note="$(bash "$LANG_BOT_SELF" lifecycle "$runtime" "$version" "$eol")" || rc=$?
+  if [ "$rc" = 3 ]; then
+    echo "**${runtime} ${version}: deprecated already** (\`runtimes/${runtime}/runtime.yaml\` has its lifecycle). The bot archives it after its end of life, ${eol} (${run_url})." > "$comment"
+    row_line "$row" held "deprecated in the catalog already; the bot archives the version after its end of life" >> "$actions.tmp"
+    mv "$actions.tmp" "$actions"
+    return 0
+  fi
+  [ "$rc" = 0 ] || return "$rc"
+  git add -A -- "runtimes/${runtime}"
+  body="${runtime} ${version} reaches its end of life on ${eol}: deprecated from today in versionDiscovery.lifecycle of runtimes/${runtime}/runtime.yaml, its sunset the end of life (${note}). RunR shows the version as deprecated and sends its reminders; after the date it leaves the picker, and the language bot archives it: ${run_url}."
+  body="$(fold -s -w 98 <<< "${body}" | sed 's/ *$//')"
+  GIT_AUTHOR_NAME="${LANG_BOT_NAME:?}" GIT_AUTHOR_EMAIL="${LANG_BOT_EMAIL:?}" GIT_COMMITTER_NAME="$LANG_BOT_NAME" GIT_COMMITTER_EMAIL="$LANG_BOT_EMAIL" \
+    git commit -q -F - <<EOF
+chore(${runtime}): ${runtime} ${version} deprecated, end of life ${eol}
+
+${body}
+
+${LANG_TRAILER}: ${runtime} ${version}
+EOF
+  if ! push_main; then
+    git reset -q --hard
+    echo "**${runtime} ${version} was not deprecated: main moved while the bot committed it.** The next run deprecates it (${run_url})." > "$comment"
+    row_line "$row" held "main moved while the bot deprecated it: the next run deprecates it" >> "$actions.tmp"
+    mv "$actions.tmp" "$actions"
+    return 0
+  fi
+  sha="$(git rev-parse HEAD)"
+  {
+    echo "**Deprecated: ${runtime} ${version}** (end of life ${eol}): ${note}."
+    echo ""
+    echo "- main ${sha}: \`versionDiscovery.lifecycle\` of \`runtimes/${runtime}/runtime.yaml\`; the publish run the bot starts publishes the runtime catalog, from which RunR reads it (the badge, the reminders, the version out of the picker after the date)"
+    echo "- after ${eol}, the first run of the language bot archives the version (its row is held until then)"
+    echo ""
+    echo "Run: ${run_url}."
+  } > "$comment"
+  row_line "$row" held "deprecated in the catalog from ${note#*deprecated }; main ${sha:0:12}; the bot archives the version after its end of life" >> "$actions.tmp"
   printf 'publish\t%s\n' "$runtime" >> "$actions.tmp"
   mv "$actions.tmp" "$actions"
 }
@@ -1177,6 +1270,7 @@ case "$command" in
   tested) cmd_tested "$@" ;;
   archive) cmd_archive "$@" ;;
   archive-one) cmd_archive_one "$@" ;;
+  deprecate-one) cmd_deprecate_one "$@" ;;
   lifecycle) cmd_lifecycle "$@" ;;
   push) cmd_push "$@" ;;
   catalog) cmd_catalog "$@" ;;

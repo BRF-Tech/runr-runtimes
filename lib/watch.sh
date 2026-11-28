@@ -394,7 +394,7 @@ Reported by ci.sh watch."
 
 - RunR shows the date (\`executor:sync\` reads it from endoflife.date) and counts down to it in its reminders; after it, the version leaves the picker and its projects can no longer be saved or deployed (running deployments are never touched).
 - Once the date is past, the language bot (lang-test.yml) archives it by itself and marks this row archived: the image stays as \`exec-${runtime}:${ARCHIVE_TAG_PREFIX}${minor}\` (with its patch tags), the floating tag \`${minor}\` goes, and the build, the patch feed and RunR's discovery leave the version out (\`runtimes/${runtime}/archived-versions\`).
-- Until then: tell the users of ${runtime} ${minor} if you want to, RunR's reminders already do.
+- Until then: the language bot deprecates it in the runtime catalog (its sunset the end of life: RunR shows the badge); tell the users of ${runtime} ${minor} if you want to, RunR's reminders already do.
 
 Reported by ci.sh watch."
     done
