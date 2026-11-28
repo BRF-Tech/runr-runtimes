@@ -23,6 +23,9 @@
 #     tested-versions and exec-php's fixed releases, and its end of life in the lifecycle;
 #   - a lifecycle entry (deprecated today, its sunset 13 weeks later) goes into
 #     versionDiscovery.lifecycle once per version;
+#   - a candidate is pushed again when the registry refuses it (three times at most) and named by
+#     its digest, the only form RunR's catalog of the e2e takes (a tag runs the published version's
+#     newest patch);
 #   - RunR's catalog offers the runtime at the candidate alone, the e2e check finds the candidate's
 #     xaas cases (an ML runtime: its ML case) and their failures, and RunR's pins of a discovered
 #     runtime are none; a runtime RunR's release does not have is exit 3 for both;
@@ -339,16 +342,25 @@ cat > "$runr/api/resources/runtimes/builtin.json" <<'EOF'
 EOF
 printf 'APP_KEY=\n' > "$runr/api/.env.docker"
 echo 'WASM_RUNTIME_VERSION="${WASM_RUNTIME_VERSION:-4.1}"' > "$runr/runtime/lib/runtime-images.sh"
-bash "$bot" catalog "$runr" python 3.16 ghcr.io/brf-tech/runr/candidates/exec-python:3.16.0 || fail "catalog"
-[ "$(jq -c '.runtimes.python | {versionDiscovery, versions}' "$runr/api/resources/runtimes/builtin.json")" = '{"versionDiscovery":null,"versions":[{"version":"3.16","image":"ghcr.io/brf-tech/runr/candidates/exec-python:3.16.0","default":true}]}' ] \
+# the candidate by its digest: RunR runs a tag as the published version's newest patch (its digest
+# from the patch feed, in the candidates' repository: MANIFEST_UNKNOWN, runs 43823418468 and
+# 45137748730), a reference by digest as it is
+cand_digest="sha256:$(printf '%064d' 7)"
+bash "$bot" catalog "$runr" python 3.16 "ghcr.io/brf-tech/runr/candidates/exec-python@${cand_digest}" || fail "catalog"
+[ "$(jq -c '.runtimes.python | {versionDiscovery, versions}' "$runr/api/resources/runtimes/builtin.json")" = "{\"versionDiscovery\":null,\"versions\":[{\"version\":\"3.16\",\"image\":\"ghcr.io/brf-tech/runr/candidates/exec-python@${cand_digest}\",\"default\":true}]}" ] \
   || fail "the catalog: $(jq -c .runtimes.python "$runr/api/resources/runtimes/builtin.json")"
 jq -e '.runtimes.nodejs.versionDiscovery' "$runr/api/resources/runtimes/builtin.json" >/dev/null || fail "another runtime changed"
 grep -qxF 'EXECUTOR_RUNTIMES=python' "$runr/api/.env.docker" || fail "EXECUTOR_RUNTIMES: $(cat "$runr/api/.env.docker")"
 cp "$runr/api/resources/runtimes/builtin.json" "$tmp/builtin.json"
-bash "$bot" catalog "$runr" nodejs 24.23 ghcr.io/brf-tech/runr/candidates/exec-nodejs:24.23.0 || fail "catalog nodejs"
+for ref in ghcr.io/brf-tech/runr/candidates/exec-nodejs:24.23.0 "ghcr.io/brf-tech/runr/candidates/exec-nodejs:24.23.0@sha256:1234"; do
+  rc=0; out="$(bash "$bot" catalog "$runr" nodejs 24.23 "$ref" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] && grep -qF 'the candidate is named by its digest' <<<"$out" && cmp -s "$tmp/builtin.json" "$runr/api/resources/runtimes/builtin.json" \
+    || fail "a candidate by tag (${ref}): exit ${rc}, ${out}"
+done
+bash "$bot" catalog "$runr" nodejs 24.23 "ghcr.io/brf-tech/runr/candidates/exec-nodejs@${cand_digest}" || fail "catalog nodejs"
 grep -qxF 'EXECUTOR_RUNTIMES=python,nodejs' "$runr/api/.env.docker" || fail "another runtime keeps Python for the rt-* cases: $(cat "$runr/api/.env.docker")"
 cp "$tmp/builtin.json" "$runr/api/resources/runtimes/builtin.json"
-rc=0; bash "$bot" catalog "$runr" ruby 3.4 x 2>/dev/null || rc=$?
+rc=0; bash "$bot" catalog "$runr" ruby 3.4 "x@${cand_digest}" 2>/dev/null || rc=$?
 [ "$rc" = 3 ] || fail "a runtime the catalog does not have: exit ${rc}"
 cat > "$tmp/results.md" <<'EOF'
 ## Results
@@ -374,7 +386,30 @@ rc=0; bash "$bot" runr-pins "$runr" wasm-rust >/dev/null || rc=$?
 [ "$rc" = 2 ] || fail "runr-pins of a pinned runtime: exit ${rc}"
 rc=0; bash "$bot" runr-pins "$runr" ruby >/dev/null || rc=$?
 [ "$rc" = 3 ] || fail "runr-pins of a runtime RunR's release does not have: exit ${rc}"
-echo "ok - RunR: the catalog offers the candidate alone, the e2e check finds its cases (an ML runtime's ML case) and failures, a discovered runtime has no pins"
+echo "ok - RunR: the catalog offers the candidate alone, by its digest (never a tag), the e2e check finds its cases (an ML runtime's ML case) and failures, a discovered runtime has no pins"
+
+# --- the candidate's push ---------------------------------------------------------------------------
+# docker and crane on PATH answer as the registry did: GHCR refused the first push of a new package
+# (run 45137748730, exec-bun: "denied"), the next one went through
+fakebin="$tmp/fakebin"
+mkdir -p "$fakebin"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "docker $*" >> "$PUSH_LOG"' \
+  'n="$(grep -c "^docker push" "$PUSH_LOG")"' '[ "$n" -gt "${PUSH_DENIALS:-0}" ] || { echo denied >&2; exit 1; }' 'echo "$3"' > "$fakebin/docker"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "crane $*" >> "$PUSH_LOG"' '[ "$1" = digest ] && echo "sha256:$(printf %064d 5)"' > "$fakebin/crane"
+chmod +x "$fakebin/docker" "$fakebin/crane"
+push() { PATH="$fakebin:$PATH" PUSH_LOG="$tmp/push.log" LANG_PUSH_PAUSE=0 bash "$bot" push "$@"; }
+: > "$tmp/push.log"
+out="$(PUSH_DENIALS=1 push ghcr.io/brf-tech/runr/candidates/exec-bun:1.4.5 2>"$tmp/push.err")" || fail "push after a denial: $(cat "$tmp/push.err")"
+[ "$out" = "ghcr.io/brf-tech/runr/candidates/exec-bun@sha256:$(printf '%064d' 5)" ] && [ "$(grep -c '^docker push -q ghcr.io/brf-tech/runr/candidates/exec-bun:1.4.5$' "$tmp/push.log")" = 2 ] \
+  && grep -qF 'the push was refused (attempt 1 of 3)' "$tmp/push.err" || fail "push: ${out} $(cat "$tmp/push.log" "$tmp/push.err")"
+: > "$tmp/push.log"
+rc=0; PUSH_DENIALS=3 push ghcr.io/brf-tech/runr/candidates/exec-bun:1.4.5 >/dev/null 2>"$tmp/push.err" || rc=$?
+[ "$rc" = 1 ] && [ "$(grep -c '^docker push' "$tmp/push.log")" = 3 ] && ! grep -q '^crane' "$tmp/push.log" && grep -qF 'refused the push 3 times' "$tmp/push.err" \
+  || fail "three denials: exit ${rc} $(cat "$tmp/push.log" "$tmp/push.err")"
+# a registry with a port: the tag goes, the port stays
+[ "$(push localhost:5000/runr/candidates/exec-go:1.27.4 2>/dev/null)" = "localhost:5000/runr/candidates/exec-go@sha256:$(printf '%064d' 5)" ] || fail "push with a port"
+push localhost:5000/runr/candidates/exec-go >/dev/null 2>&1 && fail "push without a tag"
+echo "ok - the candidate's push: again after GHCR refused it (three times at most), named by its digest"
 
 # --- an upstream outage -------------------------------------------------------------------------------
 # what the run of 2026-11-09 showed: helm's chart from GitHub in RunR's e2e, wasi-sdk in a RUN step
@@ -467,7 +502,7 @@ EOF
 chmod +x "$tmp/archive-image"
 result() { mkdir -p "$dir/results/lang-result-$1"; echo "$2" > "$dir/results/lang-result-$1/status"; echo "$tested" > "$dir/results/lang-result-$1/sha"; echo "the end of the $1 log" > "$dir/results/lang-result-$1/tail.txt"; }
 result python-3.16-build success
-echo ghcr.io/brf-tech/runr/candidates/exec-python:3.16.0 > "$dir/results/lang-result-python-3.16-build/image"
+echo "ghcr.io/brf-tech/runr/candidates/exec-python@sha256:$(printf '%064d' 3)" > "$dir/results/lang-result-python-3.16-build/image"
 printf '3.13\n3.15\n' > "$dir/results/lang-result-python-3.16-build/published"
 result python-3.16-e2e-test success
 result python-3.13-build success
@@ -489,7 +524,7 @@ jq -r '.images | join(" ")' "$tmp/bump.json" > "$dir/results/lang-result-wasm-ti
 result wasm-tinygo-e2e-test-images success
 # bun 1.5: a new minor (1.4 is published) of a release RunR's last release does not offer yet
 result bun-1.5-build success
-echo ghcr.io/brf-tech/runr/candidates/exec-bun:1.5.0 > "$dir/results/lang-result-bun-1.5-build/image"
+echo "ghcr.io/brf-tech/runr/candidates/exec-bun@sha256:$(printf '%064d' 4)" > "$dir/results/lang-result-bun-1.5-build/image"
 printf '1.4\n' > "$dir/results/lang-result-bun-1.5-build/published"
 mkdir -p "$dir/results/lang-result-bun-1.5-e2e-test"
 echo skipped > "$dir/results/lang-result-bun-1.5-e2e-test/status"

@@ -17,7 +17,8 @@
 #     that deploy those images (ci.sh test-wasm, test-images).
 # A language or ML candidate is pushed as ghcr.io/brf-tech/runr/candidates/exec-<runtime>:<full>
 # (a tool's as exec-<image>:<full>-<tool>-<release>), which RunR never discovers by itself, and
-# RunR's catalog of the e2e names it; a runtime RunR's last release does not have yet skips the
+# RunR's catalog of the e2e names it by its digest (a tag would run the published version's newest
+# patch: ci/lang-bot.sh catalog); a runtime RunR's last release does not have yet skips the
 # e2e (the build and the smoke test decide) until RunR's next release brings it; a WebAssembly
 # candidate as ghcr.io/brf-tech/runr/candidates/exec-wasm-<lang>:<version>-<tool>-<release>, loaded
 # under its published name (RUNTIME_IMAGES_LOCAL=1).
@@ -197,8 +198,8 @@ jobs:
           fi
           image="${CANDIDATES}/exec-${RUNTIME}:${FULL}"
           docker tag "ghcr.io/brf-tech/runr/exec-${RUNTIME}:${VERSION}" "$image"
-          docker push -q "$image"
-          echo "$image" > "$RUNNER_TEMP/result/image"
+          # pushed (again when GHCR refuses a new package's first push), named by its digest
+          bash ci/lang-bot.sh push "$image" > "$RUNNER_TEMP/result/image"
           echo "$RUNTIME" > "$RUNNER_TEMP/result/images"
           # the versions published now: a version without a tag is a new one
           crane ls "ghcr.io/brf-tech/runr/exec-${RUNTIME}" | grep -xE '[0-9]+\.[0-9]+' > "$RUNNER_TEMP/result/published" || true
@@ -222,8 +223,7 @@ jobs:
           [ -n "$version" ] && [ -n "$built" ] || { echo "no version of ${image} was built"; exit 1; }
           candidate="${CANDIDATES}/exec-${image}:${built}-${RUNTIME}-${FULL}"
           docker tag "ghcr.io/brf-tech/runr/exec-${image}:${version}" "$candidate"
-          docker push -q "$candidate"
-          echo "$candidate" > "$RUNNER_TEMP/result/image"
+          bash ci/lang-bot.sh push "$candidate" > "$RUNNER_TEMP/result/image"
           echo "$image" > "$RUNNER_TEMP/result/images"
           echo "$image" > "$RUNNER_TEMP/result/runtime"
           echo "$version" > "$RUNNER_TEMP/result/version"
@@ -248,8 +248,7 @@ jobs:
           ./ci.sh ml-runtimes "$RUNTIME" cpu
           image="${CANDIDATES}/exec-${RUNTIME}:${FULL}"
           docker tag "ghcr.io/brf-tech/runr/exec-${RUNTIME}:${VERSION}" "$image"
-          docker push -q "$image"
-          echo "$image" > "$RUNNER_TEMP/result/image"
+          bash ci/lang-bot.sh push "$image" > "$RUNNER_TEMP/result/image"
           echo "$RUNTIME" > "$RUNNER_TEMP/result/images"
       # a WebAssembly toolchain: the ARG and its checksums moved, a new base image mirrored first, the
       # images that have it built, smoke-tested and pushed as candidates
@@ -275,7 +274,7 @@ jobs:
             while IFS= read -r version; do
               candidate="${CANDIDATES}/exec-${name}:${version}-${RUNTIME}-${FULL}"
               docker tag "ghcr.io/brf-tech/runr/exec-${name}:${version}" "$candidate"
-              docker push -q "$candidate"
+              bash ci/lang-bot.sh push "$candidate" >/dev/null
               echo "${candidate} ghcr.io/brf-tech/runr/exec-${name}:${version}" >> "$RUNNER_TEMP/result/candidates"
             done < <(awk '/^[[:space:]]*-[[:space:]]*version:/ { v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); gsub(/["'"'"' ]/, "", v); print v }' "runtimes/${name}/runtime.yaml")
           done

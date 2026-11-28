@@ -54,11 +54,22 @@
 #       *_FIXED_RELEASES (exec-php), and {eol: EOL} for it in versionDiscovery.lifecycle of
 #       runtime.yaml (RunR keeps the end of life of its projects' version whatever endoflife.date
 #       says). The build, the watch and the patch feed leave an archived version out
+#   ci/lang-bot.sh push IMAGE
+#       docker push of a candidate, twice more after a pause (LANG_PUSH_PAUSE seconds, default
+#       20) when the registry refuses it: GHCR denies the uploads of the very first push of a new
+#       package for a moment (runs 43823418468 and 45137748730: the first candidate of exec-go,
+#       exec-nodejs, exec-dotnet and exec-bun). Prints the candidate by digest,
+#       REPOSITORY@sha256:… (crane digest), the reference the catalog takes
 #   ci/lang-bot.sh catalog RUNR RUNTIME VERSION IMAGE
 #       a checkout of BRF-Tech/runr (RUNR) offers RUNTIME at VERSION alone, with IMAGE (its
 #       built-in catalog api/resources/runtimes/builtin.json), and no other runtime but Python
 #       (EXECUTOR_RUNTIMES of api/.env.docker): RunR's main e2e then deploys its functions on the
-#       candidate image. Exit 3: RunR's catalog has no RUNTIME (a release before the runtime's)
+#       candidate image. IMAGE is the candidate by digest (REPOSITORY@sha256:…, lang-bot.sh push):
+#       RunR runs a version's image tag as the newest patch of the signed patch feed, by its
+#       digest in the image's repository (RuntimePatches::resolve), and the published version's
+#       patch is no image of the candidates' repository (runs 43823418468, 45137748730: every
+#       version published already failed on MANIFEST_UNKNOWN), while a reference by digest is
+#       never patched. Exit 3: RunR's catalog has no RUNTIME (a release before the runtime's)
 #   ci/lang-bot.sh check-e2e RESULTS.md RUNTIME VERSION [--ml]
 #       the e2e's results show the xaas cases of RUNTIME at VERSION (--ml: its ML case), and none
 #       of them failed
@@ -562,9 +573,29 @@ cmd_tested() {
   rm -f -- "$out"
 }
 
+cmd_push() {
+  local image="${1:?usage: lang-bot.sh push IMAGE}" attempt digest
+  [[ "${image##*/}" == *:* ]] && [[ "$image" != *@* ]] || { echo "${image}: a candidate is pushed by its tag" >&2; return 1; }
+  for attempt in 1 2 3; do
+    if docker push -q "$image" >&2; then
+      digest="$(crane digest "$image")" || digest=""
+      [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "${image}: the registry names no digest of it (${digest:-none})" >&2; return 1; }
+      echo "${image%:*}@${digest}"
+      return 0
+    fi
+    [ "$attempt" = 3 ] || { echo "${image}: the push was refused (attempt ${attempt} of 3), again in ${LANG_PUSH_PAUSE:-20}s" >&2; sleep "${LANG_PUSH_PAUSE:-20}"; }
+  done
+  echo "${image}: the registry refused the push 3 times" >&2
+  return 1
+}
+
 cmd_catalog() {
   local runr="${1:?usage: lang-bot.sh catalog RUNR RUNTIME VERSION IMAGE}" runtime="${2:?}" version="${3:?}" image="${4:?}"
   local catalog="${runr}/api/resources/runtimes/builtin.json" env="${runr}/api/.env.docker" out
+  [[ "$image" =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]] || {
+    echo "${image}: the candidate is named by its digest (REPOSITORY@sha256:…, lang-bot.sh push); RunR runs a tag as the published version's newest patch" >&2
+    return 1
+  }
   [ -f "$catalog" ] || { echo "no ${catalog}" >&2; return 1; }
   jq -e --arg r "$runtime" '.runtimes | (if type == "array" then .[] else .[] end) | select(.id == $r)' "$catalog" >/dev/null \
     || { echo "${catalog} has no runtime ${runtime}" >&2; return 3; }
@@ -1102,6 +1133,7 @@ case "$command" in
   archive) cmd_archive "$@" ;;
   archive-one) cmd_archive_one "$@" ;;
   lifecycle) cmd_lifecycle "$@" ;;
+  push) cmd_push "$@" ;;
   catalog) cmd_catalog "$@" ;;
   check-e2e) cmd_check_e2e "$@" ;;
   upstream) cmd_upstream "$@" ;;
