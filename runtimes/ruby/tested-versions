@@ -4,5 +4,5 @@
 # one a tag already runs only when it is listed here; until then the build is held. A person's
 # patch (patch.yml) is never held.
 3.3 3.3.14
-3.4 3.4.12
+3.4 3.4.13
 4.0 4.0.9
