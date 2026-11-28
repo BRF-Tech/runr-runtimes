@@ -104,8 +104,9 @@ jobs:
             echo "::error::rows '${ONLY}': row keys of the weekly issue separated by commas (ruby-4.0.10,go-1.27.4)"
             exit 1
           fi
-          # the open weekly issue and its rows (ci/weekly.sh)
-          gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"deps: weekly" in:title' --limit 50 --json number,title,state,labels,body > "$RUNNER_TEMP/issues.json"
+          # the open weekly issue and its rows (ci/weekly.sh); every open issue, not a search, which
+          # may not list one Language releases opened a moment ago
+          gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 300 --json number,title,state,labels,body > "$RUNNER_TEMP/issues.json"
           bash ci/weekly.sh rows "$RUNNER_TEMP/issues.json" > "$RUNNER_TEMP/rows.json"
           jq -c '{issue, week, rows: [.rows[] | {key, state}]}' "$RUNNER_TEMP/rows.json"
           bash ci/lang-bot.sh plan "$RUNNER_TEMP/rows.json" --only="$only" > "$RUNNER_TEMP/plan.json"
