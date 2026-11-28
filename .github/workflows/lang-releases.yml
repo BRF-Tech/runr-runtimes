@@ -2,8 +2,12 @@
 # `ci.sh watch` reports new versions and patch releases of the language runtimes, versions near or
 # past their end of life, new releases of the ML frameworks and of the WebAssembly toolchains, and
 # newer series of the base images the reqs mirror pins ("base: …", a person's decision).
-# Each finding becomes an issue of this repository once: a title an issue already has, open or
-# closed, is not filed again. Language tests (lang-test.yml) runs when this workflow ends.
+# Each finding becomes a row of the week's issue "deps: weekly (<ISO year>-W<week>)" once
+# (ci/weekly.sh file): a key a weekly issue has, or the title of a closed issue of the earlier bot
+# (one issue per finding), is not added again; the open rows of an earlier week's issue move into
+# this week's, which closes it with a link; an open issue of the earlier bot is folded in. A row the
+# watch no longer finds (it read every upstream) is done. Language tests (lang-test.yml) runs when
+# this workflow ends.
 name: Language releases
 
 on:
@@ -32,27 +36,29 @@ jobs:
         with:
           persist-credentials: false
       - name: ci.sh watch
+        id: watch
         env:
           # GitHub's releases API, above the anonymous rate limit
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./ci.sh watch --report="$RUNNER_TEMP/releases"
-      # one issue per finding whose title no issue (open or closed) has yet
-      - name: File the findings as issues
+      # the findings as rows of the week's issue (ci/weekly.sh file), every issue read for what was
+      # found before; an incomplete watch (an upstream did not answer) marks no row done
+      - name: The weekly issue
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WATCH: ${{ steps.watch.outcome }}
         run: |
-          shopt -s nullglob
-          for f in "$RUNNER_TEMP"/releases/*.md; do
-            title="$(head -n 1 "$f")"
-            tail -n +3 "$f" > "$f.body"
-            known="$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 200 \
-              --search "\"${title}\" in:title" --json title --jq '.[].title')"
-            if grep -qxF -- "$title" <<<"$known"; then
-              echo "already filed: ${title}"
-              continue
-            fi
-            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$f.body")"
-            echo "filed: ${title} ${url}"
-            echo "- [${title}](${url})" >> "$GITHUB_STEP_SUMMARY"
-          done
+          gh label create deps --repo "$GITHUB_REPOSITORY" --color 0366d6 \
+            --description "The language bot's weekly issue" 2>/dev/null || true
+          gh label create "needs attention" --repo "$GITHUB_REPOSITORY" --color d93f0b \
+            --description "A row of the weekly issue waits for a person" 2>/dev/null || true
+          mkdir -p "$RUNNER_TEMP/releases"
+          gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 1000 --json number,title,state,labels,body > "$RUNNER_TEMP/issues.json"
+          complete=()
+          [ "$WATCH" != success ] || complete=(--complete)
+          bash ci/weekly.sh file "$RUNNER_TEMP/releases" "$RUNNER_TEMP/issues.json" "$(date -u +%F)" "${complete[@]}" > "$RUNNER_TEMP/ops.json"
+          jq -c '.[] | {op, issue, key, title, label}' "$RUNNER_TEMP/ops.json"
+          bash ci/weekly.sh apply "$RUNNER_TEMP/ops.json" | tee "$RUNNER_TEMP/apply.log"
+          weekly="$(sed -n 's/^weekly=//p' "$RUNNER_TEMP/apply.log")"
+          [ -z "$weekly" ] || echo "The week's issue: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/issues/${weekly}" >> "$GITHUB_STEP_SUMMARY"

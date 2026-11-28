@@ -1,5 +1,6 @@
 # The language bot's tests (README.md, The language bot): after every run of Language releases and
-# by hand, each open issue "lang: <name> <version> released" without a result is tested:
+# by hand, each open row "lang: <name> <version> released" of the weekly issue "deps: weekly
+# (<ISO year>-W<week>)" (ci/weekly.sh) without a result is tested:
 #   - a language runtime (RUNTIME_DEFS of lib/common.sh: python, nodejs, go, php, java, dotnet,
 #     ruby, bun): the image of that version built and smoke-tested (the base images mirrored
 #     first), this repository's tests, then RunR's main e2e (its last release, ci.sh test on Kind)
@@ -22,22 +23,24 @@
 # e2e (the build and the smoke test decide) until RunR's next release brings it; a WebAssembly
 # candidate as ghcr.io/brf-tech/runr/candidates/exec-wasm-<lang>:<version>-<tool>-<release>, loaded
 # under its published name (RUNTIME_IMAGES_LOCAL=1).
+# The plan marks the rows it takes "testing" (a superseded one "superseded"), and the land job
+# writes each result into its row; the run's summary has the reports and the ends of the logs.
 # Green: committed on main as a fast-forward (tested-versions, or the pin), the publish workflow
-# started for the images, the issue closed with "lang: passed". Red: "needs attention" and a
-# comment with what failed (the end of the job's log); nothing committed, nothing published
-# (LANG_GATE, lib/patch.sh). An upstream server's 5xx is not the release's fault: downloads retry
-# (ci/fetch.sh, the Dockerfiles' download), a RunR suite that hit one (or whose failed cases all
-# hit the registry inside its Kind cluster) runs once more, and a test that failed on one alone is
-# labelled "lang: upstream outage" and tested again by the next run (a second outage in a row:
-# "needs attention"). Several green tests land one after the other on the moving main
+# started for the images, the row "published". Red: the row "needs attention" with what failed;
+# nothing committed, nothing published (LANG_GATE, lib/patch.sh). An upstream server's 5xx is not
+# the release's fault: downloads retry (ci/fetch.sh, the Dockerfiles' download), a RunR suite that
+# hit one (or whose failed cases all hit the registry inside its Kind cluster) runs once more, and
+# a test that failed on one alone is "upstream outage" and tested again by the next run (a second
+# outage in a row: "needs attention"). Several green tests land one after the other on the moving main
 # (ci/lang-bot.sh land), each commit with the trailer "RunR-Lang-Bot: <name> <version>", and the
-# publish workflow starts once for all of them. An open "lang: <runtime> <X.Y> end of life <date>"
-# whose date is past is archived by the land job, nobody asked: the image the floating tag named
+# publish workflow starts once for all of them. An open row "lang: <runtime> <X.Y> end of life
+# <date>" whose date is past is archived by the land job, nobody asked: the image the floating tag named
 # stays as exec-<runtime>:eol-<X.Y> with its patch tags, the floating tag goes (RunR no longer
 # offers the version; its projects stay locked as end-of-life, running deployments keep their
-# image by digest), the records go onto main (runtimes/<runtime>/archived-versions) and the issue
-# is closed. RunR is its public last release: nothing of RunR's private repository is read or
-# written.
+# image by digest), the records go onto main (runtimes/<runtime>/archived-versions) and the row is
+# "archived". The weekly issue carries the label "needs attention" while a row needs a person, and
+# closes once every row is done. RunR is its public last release: nothing of RunR's private
+# repository is read or written.
 name: Language tests
 
 on:
@@ -46,8 +49,8 @@ on:
     types: [completed]
   workflow_dispatch:
     inputs:
-      issue:
-        description: 'Issue numbers to test (again), comma-separated; empty: every open lang issue without a result'
+      rows:
+        description: 'Rows of the weekly issue to test (again), their keys comma-separated (ruby-4.0.10,go-1.27.4); empty: every open row without a result'
         default: ''
 
 permissions:
@@ -82,6 +85,7 @@ jobs:
       archive: ${{ steps.plan.outputs.archive }}
       any-archive: ${{ steps.plan.outputs.any-archive }}
       runr-tag: ${{ steps.plan.outputs.runr-tag }}
+      weekly: ${{ steps.plan.outputs.weekly }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -89,15 +93,18 @@ jobs:
       - id: plan
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ONLY: ${{ inputs.issue }}
+          ONLY: ${{ inputs.rows }}
         run: |
           only="${ONLY// /}"
-          if ! [[ "$only" =~ ^[0-9,]*$ ]]; then
-            echo "::error::issue '${ONLY}': issue numbers separated by commas"
+          if ! [[ "$only" =~ ^[a-z0-9.,-]*$ ]]; then
+            echo "::error::rows '${ONLY}': row keys of the weekly issue separated by commas (ruby-4.0.10,go-1.27.4)"
             exit 1
           fi
-          gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 300 --json number,title,labels > "$RUNNER_TEMP/issues.json"
-          bash ci/lang-bot.sh plan "$RUNNER_TEMP/issues.json" --only="$only" > "$RUNNER_TEMP/plan.json"
+          # the open weekly issue and its rows (ci/weekly.sh)
+          gh issue list --repo "$GITHUB_REPOSITORY" --state open --search '"deps: weekly" in:title' --limit 50 --json number,title,state,labels,body > "$RUNNER_TEMP/issues.json"
+          bash ci/weekly.sh rows "$RUNNER_TEMP/issues.json" > "$RUNNER_TEMP/rows.json"
+          jq -c '{issue, week, rows: [.rows[] | {key, state}]}' "$RUNNER_TEMP/rows.json"
+          bash ci/lang-bot.sh plan "$RUNNER_TEMP/rows.json" --only="$only" > "$RUNNER_TEMP/plan.json"
           jq . "$RUNNER_TEMP/plan.json"
           tag="$(gh release view --repo "$RUNR_REPOSITORY" --json tagName --jq .tagName)"
           [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::RunR's latest release is '${tag}'"; exit 1; }
@@ -112,27 +119,23 @@ jobs:
             echo "archive=$(jq -c .archive "$RUNNER_TEMP/plan.json")"
             echo "any-archive=$(jq -r '.archive | length > 0' "$RUNNER_TEMP/plan.json")"
             echo "runr-tag=${tag}"
+            echo "weekly=$(jq -r '.issue // empty' "$RUNNER_TEMP/rows.json")"
           } >> "$GITHUB_OUTPUT"
-      # the labels (created once), superseded issues closed, re-triggered ones unlabelled
-      - name: Issues
+      # the rows this run takes: testing (a test, an archive) or superseded, in the weekly issue
+      - name: The weekly issue
+        if: steps.plan.outputs.weekly != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WEEKLY: ${{ steps.plan.outputs.weekly }}
         run: |
           gh label create "needs attention" --repo "$GITHUB_REPOSITORY" --color d93f0b \
-            --description "The language bot holds it: a person decides" 2>/dev/null || true
-          gh label create "lang: passed" --repo "$GITHUB_REPOSITORY" --color 0e8a16 \
-            --description "The language bot tested it and it is on main" 2>/dev/null || true
-          gh label create "lang: upstream outage" --repo "$GITHUB_REPOSITORY" --color fbca04 \
-            --description "An upstream server's 5xx or the e2e cluster's registry stopped the test: the next run tests it again" 2>/dev/null || true
-          jq -c '.superseded[]' "$RUNNER_TEMP/plan.json" | while read -r s; do
-            gh issue close "$(jq -r .issue <<< "$s")" --repo "$GITHUB_REPOSITORY" --reason "not planned" \
-              --comment "Superseded by #$(jq -r .by <<< "$s") ($(jq -r .version <<< "$s")): the language bot tests the newest release only ([run](${RUN_URL}))."
-          done
-          jq -r '.retrigger[]' "$RUNNER_TEMP/plan.json" | while read -r issue; do
-            gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --remove-label "needs attention"
-            gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body "Tested again by the language bot ([run](${RUN_URL}))."
-          done
+            --description "A row of the weekly issue waits for a person" 2>/dev/null || true
+          bash ci/lang-bot.sh plan-updates "$RUNNER_TEMP/plan.json" "$RUN_URL" > "$RUNNER_TEMP/updates.json"
+          gh issue view "$WEEKLY" --repo "$GITHUB_REPOSITORY" --json number,title,state,labels,body > "$RUNNER_TEMP/weekly.json"
+          bash ci/weekly.sh update "$RUNNER_TEMP/weekly.json" "$RUNNER_TEMP/updates.json" > "$RUNNER_TEMP/ops.json"
+          # the tests run whatever the issue's edit does: the land job writes the results
+          bash ci/weekly.sh apply "$RUNNER_TEMP/ops.json" || echo "::warning::the weekly issue #${WEEKLY} was not updated"
 
   build:
     name: ${{ matrix.runtime }} ${{ matrix.full }} build
@@ -578,19 +581,28 @@ jobs:
         run: |
           echo "${ARCHIVE:-[]}" > "$RUNNER_TEMP/lang/archive.json"
           bash ci/lang-bot.sh land "$RUNNER_TEMP/lang" "$RUN_URL"
-      - name: Report on the issues
+      # the results into the rows of the weekly issue (read again: Language releases may have
+      # edited it meanwhile), the reports into the run's summary, the one publish
+      - name: Report in the weekly issue
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WEEKLY: ${{ needs.plan.outputs.weekly }}
         run: |
           [ -f "$RUNNER_TEMP/lang/actions" ] || exit 0
-          while IFS=$'\t' read -r action issue arg; do
-            case "$action" in
-              comment) gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body-file "$arg" ;;
-              label) gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --add-label "$arg" ;;
-              unlabel) gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --remove-label "$arg" ;;
-              close) gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason "${arg:-completed}" ;;
-              publish) gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref main -f images="$issue" ;;
-            esac
-          done < "$RUNNER_TEMP/lang/actions"
-          cat "$RUNNER_TEMP"/lang/comments/*.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          for f in "$RUNNER_TEMP"/lang/comments/*.md; do
+            [ -f "$f" ] || continue
+            { echo "### \`$(basename "$f" .md)\`"; echo ""; cat "$f"; echo ""; } >> "$GITHUB_STEP_SUMMARY"
+          done
+          rc=0
+          if [ -n "$WEEKLY" ]; then
+            awk -F '\t' '$1 == "row"' "$RUNNER_TEMP/lang/actions" \
+              | jq -R --arg run "$RUN_URL" 'split("\t") | {key: .[1], state: .[2], note: .[3], run: $run}' | jq -s . > "$RUNNER_TEMP/lang/updates.json"
+            gh issue view "$WEEKLY" --repo "$GITHUB_REPOSITORY" --json number,title,state,labels,body > "$RUNNER_TEMP/lang/weekly.json"
+            bash ci/weekly.sh update "$RUNNER_TEMP/lang/weekly.json" "$RUNNER_TEMP/lang/updates.json" > "$RUNNER_TEMP/lang/ops.json"
+            bash ci/weekly.sh apply "$RUNNER_TEMP/lang/ops.json" || rc=$?
+          fi
+          images="$(awk -F '\t' '$1 == "publish" { print $2 }' "$RUNNER_TEMP/lang/actions")"
+          [ -z "$images" ] || gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref main -f images="$images"
+          exit "$rc"

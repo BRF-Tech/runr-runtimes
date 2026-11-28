@@ -4,18 +4,21 @@
 # composite action of this repository by its path), checks every download against a pinned SHA256
 # and retries it (ci/fetch.sh: an upstream's 504 for a minute fails no job), and uses only the
 # secrets its job needs. The language bot:
-#   - lang-releases.yml watches every week and by hand (ci.sh watch) and files an issue per finding;
+#   - lang-releases.yml watches every week and by hand (ci.sh watch) and adds each finding as a row
+#     of the week's issue (ci/weekly.sh file, apply), never an issue of its own;
 #   - lang-test.yml runs after it and by hand, never on a push or a pull request; it is the only
 #     workflow that writes contents, and its one push is ci/lang-bot.sh's
 #     `git push -q origin HEAD:refs/heads/main` (no other refspec, tag, deletion or force); it
 #     tests the languages, the tools of their images, the ML runtimes and the WebAssembly
 #     toolchains with RunR's public last release (a runtime that release lacks skips its e2e), and
 #     nothing of RunR's private repository: no deploy key, no origin; every step of its build and
-#     e2e jobs before the suite prints into the job's log the red comment shows, a suite an upstream
-#     outage stopped runs once more, the results say an outage is one (lang-bot.sh upstream), and
-#     the outage label is made and taken off; the bot commits with Burak's identity
-#     and its trailer (RunR-Lang-Bot: <name> <version>); an ML release without its CUDA wheel is
-#     held and closed; the land job archives the versions past their end of life;
+#     e2e jobs before the suite prints into the job's log the run's report shows, a suite an
+#     upstream outage stopped runs once more, the results say an outage is one (lang-bot.sh
+#     upstream); it tests the rows of the weekly issue, marks them testing and writes their results
+#     there (ci/weekly.sh rows, update, apply), never a comment or a label of a per-finding issue;
+#     the bot commits with Burak's identity and its trailer (RunR-Lang-Bot: <name> <version>); an
+#     ML release without its CUDA wheel is held; the land job archives the versions past their end
+#     of life;
 #   - the publish workflow holds an untested language version (LANG_GATE), every language runtime
 #     has its tested-versions.
 #
@@ -79,8 +82,11 @@ on="$(block "$rel" on)"
 grep -qF "cron: '" <<<"$on" || fail "lang-releases.yml has no schedule"
 grep -qxE '  workflow_dispatch:' <<<"$on" || fail "lang-releases.yml cannot be run by hand"
 grep -qF './ci.sh watch --report=' "$rel" || fail "lang-releases.yml does not run ci.sh watch"
-grep -qF 'gh issue create' "$rel" || fail "lang-releases.yml files no issue"
-echo "ok - lang-releases.yml: weekly and by hand, ci.sh watch, an issue per finding"
+grep -qF 'bash ci/weekly.sh file "$RUNNER_TEMP/releases" "$RUNNER_TEMP/issues.json" "$(date -u +%F)" "${complete[@]}"' "$rel"   && grep -qF 'bash ci/weekly.sh apply "$RUNNER_TEMP/ops.json"' "$rel" || fail "lang-releases.yml does not file the findings into the weekly issue"
+# a row is done when the watch no longer finds it only after a complete watch
+grep -qF 'id: watch' "$rel" && grep -qF '[ "$WATCH" != success ] || complete=(--complete)' "$rel" || fail "lang-releases.yml marks rows done after an incomplete watch"
+grep -qE 'gh issue (create|comment)' "$rel" && fail "lang-releases.yml files an issue of its own"
+echo "ok - lang-releases.yml: weekly and by hand, ci.sh watch, a row per finding in the week's issue"
 
 # --- lang-test.yml ----------------------------------------------------------------------------------
 lt="$wfdir/lang-test.yml"
@@ -115,9 +121,12 @@ grep -qF 'runtime yet: it comes with its next release' <<<"$(job "$lt" e2e)" || 
 grep -qF 'outage="$(bash ../runtimes-repo/ci/lang-bot.sh upstream "$RUNNER_TEMP/e2e.log")"' <<<"$(job "$lt" e2e)" || fail "lang-test.yml does not run a suite an outage stopped once more"
 grep -qF 'bash ci/lang-bot.sh upstream "$RUNNER_TEMP/build.log" > "$RUNNER_TEMP/result/upstream"' <<<"$(job "$lt" build)" || fail "the build's result does not say an outage"
 grep -qF 'bash runtimes-repo/ci/lang-bot.sh upstream "$RUNNER_TEMP/e2e.log" > "$RUNNER_TEMP/result/upstream"' <<<"$(job "$lt" e2e)" || fail "the e2e's result does not say an outage"
-grep -qF 'gh label create "lang: upstream outage"' "$lt" || fail "lang-test.yml does not make the outage label"
-grep -qF 'unlabel) gh issue edit "$issue" --repo "$GITHUB_REPOSITORY" --remove-label "$arg"' "$lt" || fail "lang-test.yml does not take a label off"
-grep -qF 'close) gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason "${arg:-completed}"' "$lt" || fail "lang-test.yml does not close with a reason (held: not planned)"
+# the weekly issue: the plan reads its rows and marks the ones it takes, the land job writes the
+# results into them (read again first); nothing else is written on an issue
+grep -qF 'bash ci/weekly.sh rows "$RUNNER_TEMP/issues.json" > "$RUNNER_TEMP/rows.json"' <<<"$(job "$lt" plan)"   && grep -qF 'bash ci/lang-bot.sh plan "$RUNNER_TEMP/rows.json" --only="$only"' <<<"$(job "$lt" plan)"   && grep -qF 'bash ci/lang-bot.sh plan-updates "$RUNNER_TEMP/plan.json" "$RUN_URL"' <<<"$(job "$lt" plan)" || fail "lang-test.yml's plan does not take the weekly issue's rows"
+grep -qF 'gh issue view "$WEEKLY" --repo "$GITHUB_REPOSITORY" --json number,title,state,labels,body > "$RUNNER_TEMP/lang/weekly.json"' <<<"$(job "$lt" land)"   && grep -qF 'bash ci/weekly.sh update "$RUNNER_TEMP/lang/weekly.json" "$RUNNER_TEMP/lang/updates.json"' <<<"$(job "$lt" land)"   && grep -qF 'bash ci/weekly.sh apply "$RUNNER_TEMP/lang/ops.json"' <<<"$(job "$lt" land)" || fail "lang-test.yml does not report in the weekly issue"
+grep -qE 'gh issue (comment|close|create)|--add-label|--remove-label' "$lt" && fail "lang-test.yml writes on an issue besides the weekly issue's rows"
+grep -qF "rows:" <<<"$on" && ! grep -qE '^      issue:' <<<"$on" || fail "lang-test.yml is not run by hand with the rows' keys"
 # a torch without a wheel for the -gpu image's CUDA: held by the bump (exit 4), nothing built, its
 # e2e skipped, the issue closed by the land
 grep -qF 'if [ "$rc" = 4 ]; then' <<<"$(job "$lt" build)" && grep -qF 'echo held > "$RUNNER_TEMP/result/status"' <<<"$(job "$lt" build)" \

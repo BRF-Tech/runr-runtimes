@@ -3,9 +3,10 @@
 #
 # cmd_watch — `ci.sh watch [--report=DIR]`: every upstream release the images of this repository
 # should follow and do not yet, each one a finding. Printed, and with --report written to DIR: a
-# Markdown file per finding whose first line is its title. .github/workflows/lang-releases.yml files
-# an issue for each title no issue has yet, and .github/workflows/lang-test.yml tests the ones it
-# can (the language runtimes, the tools their images pin and the ML frameworks).
+# Markdown file per finding whose first line is its title, named after its key. .github/workflows/
+# lang-releases.yml adds each finding as a row of the week's issue "deps: weekly (<ISO year>-W<week>)"
+# once (ci/weekly.sh), and .github/workflows/lang-test.yml tests the ones it can (the language
+# runtimes, the tools their images pin, the ML frameworks and the WebAssembly toolchains).
 #
 #   lang: <runtime> <X.Y.Z> released          a language runtime of RUNTIME_DEFS (lib/common.sh):
 #                                             a new patch release of a published version, or a new
@@ -20,7 +21,7 @@
 #                                             (default 60); the weekly build already stops
 #                                             building it once it is past, and the language bot
 #                                             archives it then (lang-test.yml: eol-<X.Y>, the
-#                                             floating tag gone, the issue closed). Checked
+#                                             floating tag gone, the row archived). Checked
 #                                             whatever the upstream images answer; a version
 #                                             archived already is followed no more
 #   lang: <tool> <X.Y.Z> released             a tool a language image pins (WATCH_TOOL_DEFS: Maven
@@ -392,7 +393,7 @@ Reported by ci.sh watch."
 "${runtime} ${minor} $([ "$status" = eol ] && echo "reached its end of life on ${date}" || echo "reaches its end of life on ${date}, in ${days} days") (endoflife.date). \`${REGISTRY}/exec-${runtime}:${minor}\` is published.
 
 - RunR shows the date (\`executor:sync\` reads it from endoflife.date) and counts down to it in its reminders; after it, the version leaves the picker and its projects can no longer be saved or deployed (running deployments are never touched).
-- Once the date is past, the language bot (lang-test.yml) archives it by itself and closes this issue: the image stays as \`exec-${runtime}:${ARCHIVE_TAG_PREFIX}${minor}\` (with its patch tags), the floating tag \`${minor}\` goes, and the build, the patch feed and RunR's discovery leave the version out (\`runtimes/${runtime}/archived-versions\`).
+- Once the date is past, the language bot (lang-test.yml) archives it by itself and marks this row archived: the image stays as \`exec-${runtime}:${ARCHIVE_TAG_PREFIX}${minor}\` (with its patch tags), the floating tag \`${minor}\` goes, and the build, the patch feed and RunR's discovery leave the version out (\`runtimes/${runtime}/archived-versions\`).
 - Until then: tell the users of ${runtime} ${minor} if you want to, RunR's reminders already do.
 
 Reported by ci.sh watch."
@@ -604,7 +605,7 @@ watch_bases() {
 "Upstream has a newer series of ${name}: **${upstream}**${codename} (\`${repo#library/}:${upstream}${suffix}\`). The reqs mirror (\`REQS_IMAGES\` of \`lib/mirror.sh\`) pins ${name} up to ${have}:
 ${refs}
 
-A person decides whether and when the images and RunR follow it: add the new image to \`REQS_IMAGES\` (and run the reqs mirror workflow), move the Dockerfiles and BRF-Tech/runr's references to it, and keep the old one while anything uses it. The language bot does not test or move it, and nothing is mirrored by itself. Close this issue once decided.
+A person decides whether and when the images and RunR follow it: add the new image to \`REQS_IMAGES\` (and run the reqs mirror workflow), move the Dockerfiles and BRF-Tech/runr's references to it, and keep the old one while anything uses it. The language bot does not test or move it, and nothing is mirrored by itself. Its row is done once the watch no longer finds it (the new series in \`REQS_IMAGES\`).
 
 Reported by ci.sh watch."
   done

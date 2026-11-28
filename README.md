@@ -120,10 +120,10 @@ and RunR's guide [docs/executor-development.md](https://github.com/BRF-Tech/runr
 | `hf-serve/` | hf-serve (Python), its CPU and CUDA Dockerfiles and its tests |
 | `ci.sh`, `lib/` | Build, smoke-test, push, patch, patch feed, runtime catalog, mirror and EOL commands |
 | `test/` | Shell tests of `ci.sh`, run without Docker or a registry |
-| `ci/` | `check-dockerfiles.sh`, `check-reqs-mirror.sh`, `fetch.sh` (the workflows' pinned downloads, retried), `images.sh` (the image selection of the workflows), `lang-bot.sh` (the language bot) |
+| `ci/` | `check-dockerfiles.sh`, `check-reqs-mirror.sh`, `fetch.sh` (the workflows' pinned downloads, retried), `images.sh` (the image selection of the workflows), `lang-bot.sh` (the language bot), `weekly.sh` and `weekly.jq` (its weekly issue) |
 | `schema/` | The JSON Schemas of the patch feed (`patch-feed.v1.json`) and the runtime catalog (`runtime-catalog.v1.json`), an example of each |
 | `keys/` | `patch-feed.pub`, the public key of the signatures of the patch feed and the runtime catalog |
-| `.github/workflows/` | CI, publish, patch, platform release, heavy GPU images, reqs mirror |
+| `.github/workflows/` | CI, publish, patch, platform release, heavy GPU images, reqs mirror, the language bot (language releases, language tests) |
 | `.github/actions/` | `patch-feed-tools`: oras, cosign, check-jsonschema and PyYAML for the feed and catalog jobs |
 | `PACKAGES.md` | The GHCR packages this repository writes to, and the access each one needs |
 
@@ -205,8 +205,8 @@ key of the repository's Actions secrets (PACKAGES.md).
 | `platform-release.yml` (Platform release in the patch feed) | by hand | A RunR platform release that carries a level, added to the patch feed |
 | `heavy.yml` (Heavy images, GPU) | by hand, on any branch; weekly (Monday 04:17 UTC: `exec-pytorch` and `exec-tensorflow` `-gpu`) | `exec-pytorch`/`exec-tensorflow` `-gpu` and `hf-serve` `-cuda`, one image per job on a runner with its preinstalled toolchains removed. Without a GPU on the runner, the smoke test checks the CUDA build. `push: false` builds and smoke-tests only. |
 | `mirror.yml` (Mirror reqs images) | by hand; weekly (Monday 02:17 UTC) | `ci.sh mirror-reqs` and `ci.sh mirror-bases` |
-| `lang-releases.yml` (Language releases) | weekly (Monday 00:47 UTC); by hand | `ci.sh watch`: an issue per upstream release the images do not follow yet, and per newer base-image series the reqs mirror could follow ([The language bot](#the-language-bot)) |
-| `lang-test.yml` (Language tests) | after Language releases; by hand | Each new version built, smoke-tested and tested with RunR's e2e; green ones committed on `main` and published, red ones held ([The language bot](#the-language-bot)) |
+| `lang-releases.yml` (Language releases) | weekly (Monday 00:47 UTC); by hand | `ci.sh watch`: a row of the week's issue `deps: weekly (<ISO year>-W<week>)` per upstream release the images do not follow yet, and per newer base-image series the reqs mirror could follow ([The language bot](#the-language-bot)) |
+| `lang-test.yml` (Language tests) | after Language releases; by hand | Each new version of the weekly issue's rows built, smoke-tested and tested with RunR's e2e; green ones committed on `main` and published, red ones held, each result in its row ([The language bot](#the-language-bot)) |
 
 Which images a change touches (`ci/images.sh`, tested by `test/images_test.sh`):
 
@@ -232,22 +232,59 @@ Two workflows keep the images on their upstream releases, and test a release bef
 published.
 
 **Language releases** (`lang-releases.yml`, Mondays 00:47 UTC and by hand) runs `ci.sh watch`
-(`lib/watch.sh`) and files an issue per finding, once per title:
+(`lib/watch.sh`) and adds each finding as a row of the week's issue (below), once per key:
 
-| Title | When |
+| Finding (the row's title) | When |
 |-------|------|
 | `lang: <runtime> <X.Y.Z> released` | a language runtime of `RUNTIME_DEFS` (python, nodejs, go, php, java, dotnet, ruby, bun): a new patch release of a published version, or a new version not published yet, as `ci.sh build` discovers it (Node.js: the newest minor of an even major; Java: an Eclipse Temurin LTS major; .NET: a released version, not a preview or release candidate; Bun: the newest minor), from the tags of the base image (Docker Hub, MCR for .NET; a .NET release is the runtime's, read from `dotnet/runtime-deps`, not the SDK's). Not a release `runtimes/<runtime>/tested-versions` lists already: the next publish publishes that one |
-| `lang: <runtime> <X.Y> end of life <date>` | a published version past its end of life or within 60 days of it (endoflife.date), also when the base image's registry does not answer. A notice until the date (RunR's reminders count down to it); once the date is past, the bot archives the version and closes the issue (below) |
+| `lang: <runtime> <X.Y> end of life <date>` | a published version past its end of life or within 60 days of it (endoflife.date), also when the base image's registry does not answer. A notice until the date (its row `held until <date>`; RunR's reminders count down to it); once the date is past, the bot archives the version and its row is `archived` (below) |
 | `lang: maven\|maven-dependency-plugin <X.Y.Z> released` | a release on Maven Central newer than its `ARG` in `runtimes/java/Dockerfile`, in the pin's major line (Maven 4 is a person's change) |
 | `lang: pytorch\|tensorflow <X.Y.Z> released` | a framework release on PyPI newer than its pin |
 | `lang: <tool> <version> released` | a toolchain of the WebAssembly images newer than its `ARG` (spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk, rust) |
-| `base: <name> <series> available` | a newer released series of a base image the reqs mirror pins (`REQS_IMAGES` of `lib/mirror.sh`): alpine 3.N, debian N (by its codename: bookworm is 12), node's even majors, python 3.N, golang 1.N (`WATCH_BASE_DEFS` of `lib/watch.sh`); a series counts once a release of it is tagged (`alpine:3.24.0`, `debian:13.1`), not a pre-release. For people, as an end of life is: whether and when the images and RunR follow it is a person's decision; the bot mirrors and moves nothing, and does not test it |
+| `base: <name> <series> available` | a newer released series of a base image the reqs mirror pins (`REQS_IMAGES` of `lib/mirror.sh`): alpine 3.N, debian N (by its codename: bookworm is 12), node's even majors, python 3.N, golang 1.N (`WATCH_BASE_DEFS` of `lib/watch.sh`); a series counts once a release of it is tagged (`alpine:3.24.0`, `debian:13.1`), not a pre-release. Its row is `a person's decision`: whether and when the images and RunR follow it; the bot mirrors and moves nothing, and does not test it. The row is done once the watch no longer finds it (the new series in `REQS_IMAGES`) |
+
+**The weekly issue.** One issue per ISO week (UTC) that has findings, `deps: weekly (2026-W48)`
+(`ci/weekly.sh`, its format in `ci/weekly.jq`; the idea of BRF-Tech/runr's dependency digest), has
+a row per finding: its key (the name the watch gives it: `ruby-4.0.10`, `php-8.2-eol`,
+`base-alpine-3.24`), its title, its state, a note and the run that wrote it, and under the table
+what each finding is. The bots edit the body in place and write no comments on it; each row's data
+is a hidden `<!-- runr-lang:row {…} -->` line, and the body's last line is
+`<!-- runr-lang:weekly:<week> -->` (a marker anywhere else, say in a person's text, is none).
+
+| State | Means |
+|-------|-------|
+| `new` | found, not tested yet: the next run of Language tests takes it |
+| `testing` | a run of Language tests has it (its run linked); a run that was cancelled leaves it for the next one |
+| `published` | green: on `main` (its commit in the note), the publish workflow publishes it |
+| `needs attention` | red: the note says what failed (RunR's failed cases, or the last line of the log that says so), the run's summary has the end of the logs. A person fixes it, then runs Language tests with the row's key; a newer release supersedes it by itself |
+| `upstream outage` | an upstream server's 5xx (or the registry inside RunR's e2e cluster) stopped the test: the next run tests it again by itself; a second outage in a row is `needs attention` |
+| `held` | an ML release without its CUDA wheel (done: nobody acts, a newer release is a new row), or `held until <date>`: an end-of-life notice, archived after its date |
+| `a person's decision` | a newer series of a base image: done once the watch no longer finds it |
+| `archived` | a version past its end of life, archived |
+| `superseded` | a newer release of the same image replaced it (the bot tests the newest one only) |
+| `done` | the watch no longer finds it (it read every upstream), or `main` has it already |
+
+Finished: `published`, `archived`, `superseded`, `done` and `held` without a date. A key that any
+weekly issue has, or that a closed issue of the earlier bot named (one issue per finding, before
+2026-11-28), is not added again: the de-dup of "this title was filed already" is per row. When a
+later week has findings, its issue opens with the open rows of the last one carried over
+("Continued from #N.") and the new findings, and the last one closes with a link to it
+("Continued in #N."); a week without findings opens none. An issue whose rows are all done closes
+("Closed: every row is done."), and this week's closed issue reopens when a new finding comes in.
+The issue has the label `deps`, and `needs attention` while a row needs a person; the earlier
+labels `lang: passed` and `lang: upstream outage` are row states now. An issue of the earlier bot
+still open is folded into the week's issue as a row in the state of its labels and closed with a
+pointer to the row ("Folded into the weekly issue #N, row `<key>`"); one the complete watch no
+longer finds is closed as resolved.
 
 **Language tests** (`lang-test.yml`, after every run of Language releases and by hand: **Actions →
-Language tests → Run workflow**, or `gh workflow run lang-test.yml -f issue=31`) tests every open
-`released` issue that has no label yet, or only `lang: upstream outage` (an outage stopped the run
-before). Of several issues of one image it tests the newest
-release and closes the older ones as superseded.
+Language tests → Run workflow**, or `gh workflow run lang-test.yml -f rows=ruby-4.0.10,go-1.27.4`)
+tests every open `released` row of the weekly issue that has no result yet (`new`, `testing`), or
+that an outage stopped the run before (`upstream outage`); a row that needs attention waits until a
+run names it. Of several rows of one image it tests the newest release and marks the older ones
+superseded. It marks the rows it takes `testing`, and writes each result into its row when it
+ends (`ci/lang-bot.sh plan`, `plan-updates`, `land`; `ci/weekly.sh update`); the run's summary has
+each row's report.
 
 - **A language version.** The base images are mirrored first, then `exec-<runtime>:<X.Y>` is built
   for it and smoke-tested (`ci.sh build <runtime> --version=X.Y`), and this repository's tests run.
@@ -283,9 +320,9 @@ release and closes the older ones as superseded.
   builds them. There is no CPU/GPU split: both images install the same pins, always the newest
   that works on both. A torch without a wheel on the `-gpu` image's CUDA wheel index
   (`Dockerfile.gpu`, cu126), or without a torchvision there, is held (`ml-bump` exit 4): nothing
-  is built, nobody is asked, and the issue is closed as "held: no cu126 wheel; CPU and GPU stay on
-  <the current torch>". The bot keeps watching: a newer torch, or a newer patch of the current
-  minor, that has the wheel is bumped and tested as usual.
+  is built, nobody is asked, and the row is `held` ("held: no cu126 wheel …; CPU and GPU stay on
+  <the current torch>"). The bot keeps watching: a newer torch, or a newer patch of the current
+  minor, that has the wheel is a new row, bumped and tested as usual.
 - **A WebAssembly toolchain** (`ci/lang-bot.sh wasm-bump`). Its `ARG` moves in every
   `runtimes/wasm-*/Dockerfile` that has it, with the SHA256 of its downloads (Spin, wasi-sdk and
   wasm-tools: the release assets; zig: ziglang.org's index), and the base image of the reqs mirror
@@ -305,27 +342,29 @@ release and closes the older ones as superseded.
   minor with the lifecycle of the ones below it); a tool's, an ML framework's or a toolchain's
   commit is its pin. After the last landing the bot starts the publish workflow once, for `main`
   as the run left it, with every image the landed tests touched (a push of the workflow's token
-  starts no workflow), and closes each issue with the label `lang: passed`. The
-  comment also says what RunR's last release pins of that runtime. The language runtimes pin
+  starts no workflow), and marks each row `published` with its commit. The run's report
+  also says what RunR's last release pins of that runtime. The language runtimes pin
   nothing there (RunR finds their versions in the registry), so nothing moves in RunR.
 - **Several green tests of one run** land one after the other on the moving `main`
   (`ci/lang-bot.sh land`, each in a process of its own). When a test's patch no longer applies
   because the landings before it moved the lines around it (tinygo's mirror line after rust's,
   zig's `ARG`s after wasm-tools'), the bot makes the same bump again on the new `main` and commits
   it only when it changes the very lines the tested patch changed (the same pins and checksums);
-  otherwise the issue gets a comment and the next run tests it again. When `main` changed the
-  images' directories after the tested commit by a commit that is not the bot's (no trailer),
-  nothing is committed, and the next run tests it again. A test the bot fails to land is reported
-  (`needs attention`, with its log); the others still land and every issue gets its comment.
-- **Red:** the label `needs attention` and a comment with what failed: the end of each failed
-  job's log, into which every step of the job prints (a step that printed nothing says so instead
-  of an empty block). Nothing is committed: the weekly publish holds a language version, and a
-  tool, ML or toolchain pin stays where it was. Run the workflow with the issue's number to test
-  it again (it takes the label off), or wait for a newer release to supersede the issue.
+  otherwise its row goes back to `new` with why, and the next run tests it again. When `main`
+  changed the images' directories after the tested commit by a commit that is not the bot's (no
+  trailer), nothing is committed, and the next run tests it again. A test the bot fails to land is
+  reported (`needs attention`, its log in the run's summary); the others still land and every row
+  gets its result.
+- **Red:** the row `needs attention`, its note what failed (RunR's failed cases, else the last
+  line of the log that says so) and the run; the run's summary has the end of each failed job's
+  log, into which every step of the job prints (a step that printed nothing says so instead of an
+  empty block). Nothing is committed: the weekly publish holds a language version, and a tool, ML
+  or toolchain pin stays where it was. Run the workflow with the row's key to test it again, or
+  wait for a newer release to supersede the row.
 - **An end of life.** RunR counts down to a version's end of life in its reminders; after it the
   version leaves the picker and its projects can no longer be saved or deployed (running
-  deployments are never touched). The `lang: <runtime> <X.Y> end of life <date>` issue is a notice
-  until that date. The first run after it archives the version, nobody asked (`ci/lang-bot.sh
+  deployments are never touched). The `lang: <runtime> <X.Y> end of life <date>` row is a notice
+  until that date (`held until <date>`). The first run after it archives the version, nobody asked (`ci/lang-bot.sh
   land`, `archive-one`; `lib/eol.sh` `eol_archive_image`): the image the floating tag names stays,
   by its digest, as `exec-<runtime>:eol-<X.Y>` with its patch tags (history); the floating tag
   `<X.Y>` goes (GHCR deletes no tag by itself: it moves onto an empty image of its own, whose
@@ -336,7 +375,7 @@ release and closes the older ones as superseded.
   for it in `versionDiscovery.lifecycle` of `runtime.yaml`, which RunR reads whatever
   endoflife.date says. The build, the watch and the patch feed leave an archived version out (its
   patch tags all stay); the publish run the bot starts drops its patches from the signed feed and
-  publishes the runtime catalog. The issue is closed with what was archived where.
+  publishes the runtime catalog. The row is `archived`, its note says what was archived where.
   `ci.sh eol --archive` does the registry's part by hand.
 - **An outage** is not the release's fault, and pages nobody. The downloads retry (the
   Dockerfiles' `curl`, `ci/fetch.sh` for the tools the jobs install, a GitHub release asset
@@ -348,9 +387,8 @@ release and closes the older ones as superseded.
   after N attempts", Zot's "synchronization failed", "connection refused", "i/o timeout"); never
   another local address, where the candidate answers. When RunR's e2e lists failed cases, each of
   them must be one: a case that failed on its own (a compile error, its own output) is a failure.
-  A test whose every failure is an outage gets the label `lang: upstream outage` and a comment
-  that says so, and the next run tests it again by itself; a second outage in a row is
-  `needs attention`.
+  A test whose every failure is an outage is `upstream outage` in its row, and the next run tests
+  it again by itself; a second outage in a row is `needs attention`.
 - **The bot's own tests run on the change.** They read the pins from the files the bump moves
   (`test/catalog_test.sh`: one Spin CLI in every WebAssembly image, whichever it is;
   `test/lang_bot_test.sh` bumps from the checkout's pin to the next release), so a green
@@ -364,9 +402,10 @@ update) is never held, nor a patch of the patch workflow (a person's decision, a
 
 What the workflows need besides their `GITHUB_TOKEN`:
 
-- **Language releases:** `issues: write`.
+- **Language releases:** `issues: write` (the weekly issue, the labels `deps` and
+  `needs attention`, the earlier bot's issues folded).
 - **Language tests:**
-  - `issues: write` (the labels `needs attention`, `lang: passed`, `lang: upstream outage`);
+  - `issues: write` (the weekly issue's rows and its label `needs attention`);
   - `packages: write` (the base images mirrored, the candidates pushed);
   - in its landing job alone, `contents: write` and `actions: write` (the publish workflow), and
     `packages: write` to archive an end-of-life version (its `eol-<X.Y>` tag, its floating tag

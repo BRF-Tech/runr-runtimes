@@ -15,6 +15,7 @@ go.mod        text eol=lf
 *.yaml        text eol=lf
 *.yml         text eol=lf
 *.toml        text eol=lf
+*.jq          text eol=lf
 *.txt         text eol=lf
 *.md          text eol=lf
 Dockerfile    text eol=lf

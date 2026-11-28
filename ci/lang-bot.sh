@@ -2,24 +2,28 @@
 # The language bot (.github/workflows/lang-test.yml): the parts of its run that are more than a
 # command, tested by test/lang_bot_test.sh.
 #
-#   ci/lang-bot.sh plan ISSUES.json [--only=N,…]
-#       which issues of lang-releases.yml (`ci.sh watch`) this run tests: JSON {tests: [{issue,
-#       kind, runtime, version, full, key, suites, outage}], archive: [{issue, runtime, version,
-#       eol}], superseded: [{issue, by}], retrigger: [issue], skipped: [{issue, reason}],
-#       attention: []}. kind "language" (the runtimes of RUNTIME_DEFS
+#   ci/lang-bot.sh plan ROWS.json [--only=KEY,…]
+#       which rows of the weekly issue (ci/weekly.sh rows: the findings of `ci.sh watch`) this run
+#       tests: JSON {tests: [{row, kind, runtime, version, full, key, suites, outage}], archive:
+#       [{row, runtime, version, eol}], superseded: [{row, by, version}], retrigger: [row],
+#       skipped: [{row, reason}], attention: []}. row is the row's key (ruby-4.0.10). kind
+#       "language" (the runtimes of RUNTIME_DEFS
 #       in lib/common.sh: python, nodejs, go, php, java, dotnet, ruby, bun; version is the
 #       major.minor, full the release), "tool" (a tool a language image pins, LANG_TOOL_DEFS:
 #       maven, maven-dependency-plugin; version and full its release), "ml" (pytorch, tensorflow:
 #       the framework release; version its major.minor, the image's tag) or "wasm" (a toolchain of
 #       the WebAssembly images: spin, tinygo, wasi-sdk, wasm-tools, zig, componentize-py, spin-sdk,
-#       rust). suites: RunR's e2e suites the test runs. Of several open issues of one image (a
+#       rust). suites: RunR's e2e suites the test runs. Of several open rows of one image (a
 #       language version, a tool, an ML runtime, a toolchain) the newest is tested, the older ones
 #       superseded. An end-of-life notice of a language version is for people until its date
 #       (skipped: RunR's reminders count down), archived once the date is past (archive: land,
-#       ci/lang-bot.sh archive); an issue labelled "lang: passed"
-#       is done, one labelled "needs attention" waits unless the run names it (--only), which takes
-#       the label off. One labelled "lang: upstream outage" is tested again (outage: true): the run
-#       before failed on an upstream server's 5xx alone.
+#       ci/lang-bot.sh archive); a row that is done (published, archived, superseded, done, held
+#       without a date) or a person's decision (a base image's series) is not tested, one that
+#       needs attention waits unless the run names it (--only). One an upstream outage stopped is
+#       tested again (outage: true): the run before failed on an upstream server's 5xx alone.
+#   ci/lang-bot.sh plan-updates PLAN.json RUN_URL
+#       the rows a plan takes as updates of the weekly issue (ci/weekly.sh update): each test and
+#       archive "testing", a superseded row "superseded"
 #   ci/lang-bot.sh ml-bump RUNTIME VERSION
 #       the framework pin of an ML runtime moved to VERSION in this checkout: torch with the
 #       torchvision pip installs next to it, the newest release whose torch requirement admits it
@@ -100,19 +104,20 @@
 #       a commit that is not one of the bot's (the trailer). When its patch no longer applies
 #       because this run's landings moved the lines around it, the same bump is made again on the
 #       new main and committed only when it changes the very lines the tested patch changed; else
-#       it waits for the next run. A red test is labelled "needs attention" with the end of the
-#       failed jobs' logs, unless each of its failures is an outage (their result's upstream file:
-#       lang-bot.sh upstream): then it is labelled "lang: upstream outage" and the next run tests
-#       it again; a second outage in a row is "needs attention". Each test lands in a process of
-#       its own: one that fails is reported ("needs attention", with its log) and the others still
-#       land. A test its bump held (ml-bump exit 4: build status "held") is closed as not planned
-#       with the reason, nobody asked. Then every version of DIR/archive.json past its end of life
-#       is archived, each in a process of its own (archive-one): the registry (the image as
-#       eol-<version>, the floating tag gone), its records on main (archive), the issue closed;
-#       LANG_ARCHIVE_IMAGE replaces the registry step (the tests). DIR/actions: what the issues
-#       get, one action per line (comment ISSUE FILE, label ISSUE LABEL, unlabel ISSUE LABEL, close
-#       ISSUE [REASON]), and at the end one publish IMAGES for the main the run left: every image a
-#       landed test or an archive touched, once
+#       it waits for the next run. A red test's row is "needs attention", its note what failed
+#       (RunR's failed cases, else the last line of the log that says so), unless each of its
+#       failures is an outage (their result's upstream file: lang-bot.sh upstream): then it is
+#       "upstream outage" and the next run tests it again; a second outage in a row is "needs
+#       attention". Each test lands in a process of its own: one that fails is reported ("needs
+#       attention") and the others still land. A test its bump held (ml-bump exit 4: build status
+#       "held") is "held" with the reason, nobody asked. Then every version of DIR/archive.json
+#       past its end of life is archived, each in a process of its own (archive-one): the registry
+#       (the image as eol-<version>, the floating tag gone), its records on main (archive), its row
+#       "archived"; LANG_ARCHIVE_IMAGE replaces the registry step (the tests). DIR/actions: what
+#       the weekly issue's rows get, one per line (row KEY STATE NOTE, tab-separated: ci/weekly.sh
+#       update), and at the end one publish IMAGES for the main the run left: every image a landed
+#       test or an archive touched, once. DIR/comments/KEY.md: each row's report, with the end of
+#       the failed jobs' logs (the run's summary)
 #
 # Needs bash, jq, curl (ml-bump, wasm-bump, tool-bump), sha256sum, sha512sum and GNU sed, sort and
 # date.
@@ -123,9 +128,6 @@ set -euo pipefail
 ROOT="${LANG_BOT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # the trailer of the bot's commits on main: "RunR-Lang-Bot: <name> <version>"
 LANG_TRAILER="RunR-Lang-Bot"
-PASSED_LABEL="${LANG_PASSED_LABEL:-lang: passed}"
-ATTENTION_LABEL="${LANG_ATTENTION_LABEL:-needs attention}"
-OUTAGE_LABEL="${LANG_OUTAGE_LABEL:-lang: upstream outage}"
 # the language runtimes: RUNTIME_DEFS of lib/common.sh, as ci.sh builds them
 SCRIPT_DIR="$ROOT"
 # shellcheck source=../lib/common.sh
@@ -205,59 +207,67 @@ lang_tool() { local d; for d in "${LANG_TOOL_DEFS[@]}"; do [ "${d%%|*}" = "$1" ]
 filter_of() { local def; def="$(runtime_def "$1")" || return 0; IFS='|' read -r _ _ _ _ _ def _ <<< "$def"; echo "$def"; }
 
 cmd_plan() {
-  local issues="${1:?usage: lang-bot.sh plan ISSUES.json [--only=N,…]}" only="" arg
+  local rowsfile="${1:?usage: lang-bot.sh plan ROWS.json [--only=KEY,…]}" only="" arg
   for arg in "${@:2}"; do
     case "$arg" in
       --only=*) only="${arg#--only=}" ;;
       *) echo "unknown argument: ${arg}" >&2; return 1 ;;
     esac
   done
-  [[ "$only" =~ ^[0-9,]*$ ]] || { echo "--only: issue numbers separated by commas" >&2; return 1; }
+  [[ "$only" =~ ^[a-z0-9.,-]*$ ]] || { echo "--only: row keys separated by commas (ruby-4.0.10,go-1.27.4)" >&2; return 1; }
   only=" ${only//,/ } "
-  local number title labels runtime version kind key full suites def outage date today
-  local -A newest=() newest_issue=()
+  local row title state until runtime version kind key full suites def outage today
+  local -A newest=() newest_row=()
   local rows=() tests=() superseded=() retrigger=() skipped=() archive=()
   today="${LANG_TODAY:-$(date -u +%Y-%m-%d)}"
-  while IFS=$'\t' read -r number title labels; do
-    [ -n "$number" ] || continue
+  # skip ROW REASON — a row this run does not test
+  skip() { skipped+=("$(jq -nc --arg r "$1" --arg why "$2" '{row: $r, reason: $why}')"); }
+  while IFS=$'\t' read -r row title state until; do
+    [ -n "$row" ] || continue
+    # done: published, archived, superseded, done, and held without a date (an ML release without
+    # its CUDA wheel)
+    case "$state" in
+      published|archived|superseded|done) skip "$row" "done already (${state})"; continue ;;
+      held) if [ "$until" = - ]; then skip "$row" "done already (held)"; continue; fi ;;
+    esac
     # an end of life: a notice for people until its date (RunR's reminders count down), archived
     # by the bot once the date is past
     if [[ "$title" =~ ^lang:\ ([a-z0-9-]+)\ ([0-9]+\.[0-9]+)\ end\ of\ life\ ([0-9]{4}-[0-9]{2}-[0-9]{2})$ ]] \
       && [[ "$LANGUAGES" == *" ${BASH_REMATCH[1]} "* ]] && [[ "${BASH_REMATCH[3]}" < "$today" ]]; then
-      if [ "$only" != "  " ] && [[ "$only" != *" ${number} "* ]]; then
-        skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "not named in this run"}')")
+      if [ "$only" != "  " ] && [[ "$only" != *" ${row} "* ]]; then
+        skip "$row" "not named in this run"
       else
-        archive+=("$(jq -nc --argjson i "$number" --arg r "${BASH_REMATCH[1]}" --arg v "${BASH_REMATCH[2]}" --arg d "${BASH_REMATCH[3]}" \
-          '{issue: $i, runtime: $r, version: $v, eol: $d}')")
+        archive+=("$(jq -nc --arg row "$row" --arg r "${BASH_REMATCH[1]}" --arg v "${BASH_REMATCH[2]}" --arg d "${BASH_REMATCH[3]}" \
+          '{row: $row, runtime: $r, version: $v, eol: $d}')")
       fi
       continue
     fi
     if [[ "$title" =~ ^lang:\ [a-z0-9-]+\ [0-9.]+\ end\ of\ life ]]; then
-      skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "an end-of-life notice, for people until its date"}')")
+      skip "$row" "an end-of-life notice, for people until its date"
       continue
     fi
-    [[ "$title" =~ ^lang:\ ([a-z0-9-]+)\ ([0-9]+(\.[0-9]+)*)\ released$ ]] || continue
+    if [[ "$title" == base:* ]]; then
+      skip "$row" "a person's decision: the bot does not test a base image's series"
+      continue
+    fi
+    [[ "$title" =~ ^lang:\ ([a-z0-9-]+)\ ([0-9]+(\.[0-9]+)*)\ released$ ]] || { skip "$row" "not a release: ${title}"; continue; }
     runtime="${BASH_REMATCH[1]}"
     version="${BASH_REMATCH[2]}"
-    if [[ "$labels" == *"|${PASSED_LABEL}|"* ]]; then
-      skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "passed already"}')")
-      continue
-    fi
     full="$version"
     if [[ "$LANGUAGES" == *" ${runtime} "* ]]; then
-      [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "a language release is X.Y.Z"}')"); continue; }
+      [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { skip "$row" "a language release is X.Y.Z"; continue; }
       kind=language
       version="${full%.*}"
       key="${runtime}-${version}"
       suites="test"
     elif [[ "$ML" == *" ${runtime} "* ]]; then
-      [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "a framework release is X.Y.Z"}')"); continue; }
+      [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { skip "$row" "a framework release is X.Y.Z"; continue; }
       kind=ml
       version="${full%.*}"
       key="$runtime"
       suites="test-ml"
     elif def="$(lang_tool "$runtime")"; then
-      [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "a tool release is X.Y.Z"}')"); continue; }
+      [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { skip "$row" "a tool release is X.Y.Z"; continue; }
       kind=tool
       IFS='|' read -r _ key _ <<< "$def"
       key="${key}-${runtime}"
@@ -270,45 +280,54 @@ cmd_plan() {
       suites="${def##*|}"
       suites="${suites:--}"
     else
-      skipped+=("$(jq -nc --argjson i "$number" --arg r "$runtime" '{issue: $i, reason: ("the bot does not know " + $r)}')")
+      skip "$row" "the bot does not know ${runtime}"
       continue
     fi
-    rows+=("${number}"$'\t'"${kind}"$'\t'"${runtime}"$'\t'"${version}"$'\t'"${full}"$'\t'"${key}"$'\t'"${suites}"$'\t'"${labels}")
-    if [ -z "${newest[$key]:-}" ] || newer "$full" "${newest[$key]}" \
-      || { [ "$full" = "${newest[$key]}" ] && [ "$number" -gt "${newest_issue[$key]}" ]; }; then
+    rows+=("${row}"$'\t'"${kind}"$'\t'"${runtime}"$'\t'"${version}"$'\t'"${full}"$'\t'"${key}"$'\t'"${suites}"$'\t'"${state}")
+    if [ -z "${newest[$key]:-}" ] || newer "$full" "${newest[$key]}"; then
       newest[$key]="$full"
-      newest_issue[$key]="$number"
+      newest_row[$key]="$row"
     fi
-  done < <(jq -r '.[] | [.number, .title, ("|" + ([.labels[]?.name] | join("|")) + "|")] | @tsv' "$issues")
+  done < <(jq -r '(if type == "array" then . else .rows end)[] | [.key, .title, (.state // "new"), (.until // "-")] | @tsv' "$rowsfile")
 
-  local row
-  for row in ${rows[@]+"${rows[@]}"}; do
-    IFS=$'\t' read -r number kind runtime version full key suites labels <<< "$row"
-    if [ "$number" != "${newest_issue[$key]}" ]; then
-      superseded+=("$(jq -nc --argjson i "$number" --argjson b "${newest_issue[$key]}" --arg f "${newest[$key]}" '{issue: $i, by: $b, version: $f}')")
+  local entry
+  for entry in ${rows[@]+"${rows[@]}"}; do
+    IFS=$'\t' read -r row kind runtime version full key suites state <<< "$entry"
+    if [ "$row" != "${newest_row[$key]}" ]; then
+      superseded+=("$(jq -nc --arg r "$row" --arg b "${newest_row[$key]}" --arg f "${newest[$key]}" '{row: $r, by: $b, version: $f}')")
       continue
     fi
-    if [ "$only" != "  " ] && [[ "$only" != *" ${number} "* ]]; then
-      skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "not named in this run"}')")
+    if [ "$only" != "  " ] && [[ "$only" != *" ${row} "* ]]; then
+      skip "$row" "not named in this run"
       continue
     fi
-    if [[ "$labels" == *"|${ATTENTION_LABEL}|"* ]]; then
-      if [[ "$only" != *" ${number} "* ]]; then
-        skipped+=("$(jq -nc --argjson i "$number" '{issue: $i, reason: "waits for a person; run the workflow with this issue number to test it again"}')")
+    if [ "$state" = "needs attention" ]; then
+      if [[ "$only" != *" ${row} "* ]]; then
+        skip "$row" "waits for a person; run the workflow with this row's key to test it again"
         continue
       fi
-      retrigger+=("$number")
+      retrigger+=("$row")
     fi
     # the run before hit an upstream outage (land): this run is its second chance
     outage=false
-    [[ "$labels" != *"|${OUTAGE_LABEL}|"* ]] || outage=true
-    tests+=("$(jq -nc --argjson i "$number" --arg k "$kind" --arg r "$runtime" --arg v "$version" --arg f "$full" --arg key "$key" --arg s "$suites" --argjson o "$outage" \
-      '{issue: $i, kind: $k, runtime: $r, version: $v, full: $f, key: $key, suites: ($s | split(" ") | map(select(. != "" and . != "-"))), outage: $o}')")
+    [ "$state" != "upstream outage" ] || outage=true
+    tests+=("$(jq -nc --arg row "$row" --arg k "$kind" --arg r "$runtime" --arg v "$version" --arg f "$full" --arg key "$key" --arg s "$suites" --argjson o "$outage" \
+      '{row: $row, kind: $k, runtime: $r, version: $v, full: $f, key: $key, suites: ($s | split(" ") | map(select(. != "" and . != "-"))), outage: $o}')")
   done
   jq -nc --argjson tests "$(json_list ${tests[@]+"${tests[@]}"})" --argjson superseded "$(json_list ${superseded[@]+"${superseded[@]}"})" \
-    --argjson retrigger "$(json_list ${retrigger[@]+"${retrigger[@]}"})" --argjson skipped "$(json_list ${skipped[@]+"${skipped[@]}"})" \
+    --argjson retrigger "$(json_strings ${retrigger[@]+"${retrigger[@]}"})" --argjson skipped "$(json_list ${skipped[@]+"${skipped[@]}"})" \
     --argjson archive "$(json_list ${archive[@]+"${archive[@]}"})" \
     '{tests: ($tests | sort_by(.key)), archive: ($archive | sort_by(.runtime, .version)), superseded: $superseded, retrigger: $retrigger, attention: [], skipped: $skipped}'
+}
+
+# plan-updates PLAN.json RUN_URL — the rows the plan takes, as updates of the weekly issue
+# (ci/weekly.sh update): a test or an archive testing, a superseded row superseded
+cmd_plan_updates() {
+  local plan="${1:?usage: lang-bot.sh plan-updates PLAN.json RUN_URL}" run_url="${2:?}"
+  jq -c --arg run "$run_url" '
+    [(.tests[] | {key: .row, state: "testing", note: "this run tests it", run: $run}),
+     (.archive[] | {key: .row, state: "testing", note: "this run archives it (end of life \(.eol))", run: $run}),
+     (.superseded[] | {key: .row, state: "superseded", note: "by `\(.by)`: the bot tests the newest release only", run: $run})]' "$plan"
 }
 
 # the watch's fetch (lib/watch.sh: WATCH_FIXTURES answers in the tests)
@@ -712,6 +731,25 @@ tail_of() {
 # result: lang-bot.sh upstream), none when it failed for another reason
 upstream_of() { cat "$1/results/$2/upstream" 2>/dev/null || true; }
 
+# short_of DIR NAME — what failed, in a line for the row: the failed cases of RunR's e2e summary,
+# else the last line of the job's log that says what went wrong (its last line)
+short_of() {
+  local file="$1/results/$2/tail.txt" cases line
+  if [ ! -f "$file" ]; then echo "no log (the job did not get that far)"; return 0; fi
+  cases="$(sed 's/\x1b\[[0-9;]*m//g' "$file" | awk '
+    index($0, "── Failures ──") { on = 1; next }
+    on && index($0, "── ") { on = 0 }
+    on && /^[[:space:]]*✗/ { s = $0; sub(/^[[:space:]]*✗[[:space:]]*/, "", s); sub(/\]:.*$/, "]", s); if (s != "") print s }' | awk '!seen[$0]++' | paste -sd , - | sed 's/,/, /g')"
+  if [ -n "$cases" ]; then echo "failed: ${cases}"; return 0; fi
+  line="$(sed 's/\x1b\[[0-9;]*m//g' "$file" | grep -v '^[[:space:]]*$' | grep -iE 'error|denied|fail|refused|cannot|unable|not ' | tail -n 1 || true)"
+  [ -n "$line" ] || line="$(sed 's/\x1b\[[0-9;]*m//g' "$file" | grep -v '^[[:space:]]*$' | tail -n 1 || true)"
+  echo "${line:-the log is empty}" | sed 's/^[[:space:]]*//' | cut -c1-200
+}
+
+# row_line ROW STATE NOTE — the action that sets a row of the weekly issue (ci/weekly.sh update),
+# one line: a tab or a line break of the note becomes a space
+row_line() { printf 'row\t%s\t%s\t%s\n' "$1" "$2" "$(printf '%s' "$3" | tr '\t\r\n' '   ' | cut -c1-400)"; }
+
 # push_main — HEAD onto main as a fast-forward, never forced: the bot's one push
 push_main() {
   local rc=0
@@ -742,7 +780,7 @@ bump_again() {
 }
 
 cmd_land() {
-  local dir="${1:?usage: lang-bot.sh land DIR RUN_URL}" run_url="${2:?}" n i entry issue name rc log what list
+  local dir="${1:?usage: lang-bot.sh land DIR RUN_URL}" run_url="${2:?}" n i entry row name rc log what list
   mkdir -p "$dir/comments" "$dir/actions.d" "$dir/bot"
   : > "$dir/actions"
   : > "$dir/publish.list"
@@ -758,7 +796,7 @@ cmd_land() {
     n="$(jq length "$list")"
     for ((i = 0; i < n; i++)); do
       entry="$(jq -c ".[$i]" "$list")"
-      issue="$(jq -r .issue <<< "$entry")"
+      row="$(jq -r .row <<< "$entry")"
       name="$(jq -r '"\(.runtime) \(.full // .version)"' <<< "$entry")"
       log="$dir/${what}-${i}.log"
       rm -f -- "$dir/actions.d/${what}-${i}"
@@ -766,24 +804,24 @@ cmd_land() {
       bash "$LANG_BOT_SELF" "${what}-one" "$dir" "$i" "$run_url" > "$log" 2>&1 || rc=$?
       cat "$log"
       if [ "$rc" = 0 ] && [ -f "$dir/actions.d/${what}-${i}" ]; then
-        # its issue's actions now; its images join the one publish after the loop
+        # its row's actions now; its images join the one publish after the loop
         grep -v $'^publish\t' "$dir/actions.d/${what}-${i}" >> "$dir/actions" || true
         sed -n $'s/^publish\t//p' "$dir/actions.d/${what}-${i}" | tr ',' '\n' >> "$dir/publish.list"
         continue
       fi
-      # it failed in the middle: the issue hears of it, the checkout is clean for the next one
+      # it failed in the middle: its row says so, the checkout is clean for the next one
       git reset -q --hard 2>/dev/null || true
       git clean -fdq 2>/dev/null || true
       {
-        echo "**Needs attention: the bot could not $([ "$what" = land ] && echo land || echo archive) ${name}** (\`ci/lang-bot.sh ${what}\`, exit ${rc}). Nothing of it was committed; the other issues of the run were handled and reported."
+        echo "**Needs attention: the bot could not $([ "$what" = land ] && echo land || echo archive) ${name}** (\`ci/lang-bot.sh ${what}\`, exit ${rc}). Nothing of it was committed; the other rows of the run were handled and reported."
         echo ""
         echo '```'
         tail -n 30 "$log"
         echo '```'
         echo ""
-        echo "Run: ${run_url}. Fix the bot (or do it by hand), then run **Actions → Language tests → Run workflow** with this issue's number."
-      } > "$dir/comments/${issue}.md"
-      printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$ATTENTION_LABEL" "$issue" "$dir/comments/${issue}.md" >> "$dir/actions"
+        echo "Run: ${run_url}. Fix the bot (or do it by hand), then run **Actions → Language tests → Run workflow** with the row's key (\`${row}\`)."
+      } > "$dir/comments/${row}.md"
+      row_line "$row" "needs attention" "the bot could not $([ "$what" = land ] && echo land || echo archive) it (ci/lang-bot.sh ${what}, exit ${rc}): the run's summary has its log" >> "$dir/actions"
     done
   done
   # one publish for main as the run left it, with every image a landed test (or an archive) touched:
@@ -799,12 +837,12 @@ cmd_land() {
 # a command the tests answer with), then the records on main (archive), the issue closed
 cmd_archive_one() {
   local dir="${1:?usage: lang-bot.sh archive-one DIR INDEX RUN_URL}" i="${2:?}" run_url="${3:?}"
-  local entry issue runtime version eol digest actions comment sha body patches repo
+  local entry row runtime version eol digest actions comment sha body patches repo
   entry="$(jq -c ".[$i]" "$dir/archive.json")"
-  issue="$(jq -r .issue <<< "$entry")"; runtime="$(jq -r .runtime <<< "$entry")"
+  row="$(jq -r .row <<< "$entry")"; runtime="$(jq -r .runtime <<< "$entry")"
   version="$(jq -r .version <<< "$entry")"; eol="$(jq -r .eol <<< "$entry")"
   actions="$dir/actions.d/archive-${i}"
-  comment="$dir/comments/${issue}.md"
+  comment="$dir/comments/${row}.md"
   repo="${REGISTRY}/exec-${runtime}"
   : > "$actions.tmp"
 
@@ -829,7 +867,7 @@ cmd_archive_one() {
   git add -A -- "runtimes/${runtime}"
   if git diff --cached --quiet; then
     echo "**Archived: ${runtime} ${version}** was archived already: \`${repo}:${ARCHIVE_TAG_PREFIX}${version}\` is ${digest}, and main has its records (${run_url})." > "$comment"
-    printf 'comment\t%s\t%s\nclose\t%s\n' "$issue" "$comment" "$issue" >> "$actions.tmp"
+    row_line "$row" archived "${repo}:${ARCHIVE_TAG_PREFIX}${version} is ${digest:0:19}…; main had its records already" >> "$actions.tmp"
     mv "$actions.tmp" "$actions"
     return 0
   fi
@@ -846,7 +884,7 @@ EOF
   # a fast-forward of main, never forced
   if ! push_main; then
     echo "**${runtime} ${version} is archived in the registry (\`${repo}:${ARCHIVE_TAG_PREFIX}${version}\`, ${digest}), but main moved while the bot recorded it.** The next run records it (${run_url})." > "$comment"
-    printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
+    row_line "$row" new "archived in the registry (${repo}:${ARCHIVE_TAG_PREFIX}${version}), but main moved while the bot recorded it: the next run records it" >> "$actions.tmp"
     mv "$actions.tmp" "$actions"
     return 0
   fi
@@ -861,26 +899,27 @@ EOF
     echo ""
     echo "Run: ${run_url}."
   } > "$comment"
-  printf 'comment\t%s\t%s\nclose\t%s\npublish\t%s\n' "$issue" "$comment" "$issue" "$runtime" >> "$actions.tmp"
+  row_line "$row" archived "${repo}:${ARCHIVE_TAG_PREFIX}${version} (${digest:0:19}…), the floating tag gone; main ${sha:0:12}" >> "$actions.tmp"
+  printf 'publish\t%s\n' "$runtime" >> "$actions.tmp"
   mv "$actions.tmp" "$actions"
 }
 
 # land-one DIR INDEX RUN_URL — the landing of one test of DIR/tests.json (cmd_land runs it), its
 # actions in DIR/actions.d/land-INDEX
 cmd_land_one() {
-  local dir="${1:?usage: lang-bot.sh land-one DIR INDEX RUN_URL}" i="${2:?}" run_url="${3:?}" test issue kind runtime version full key build
+  local dir="${1:?usage: lang-bot.sh land-one DIR INDEX RUN_URL}" i="${2:?}" run_url="${3:?}" test row kind runtime version full key build
   local tested comment name subject sha pins rc suite suites failed paths images publish lines note body older deprecated outage retest
   local actions patch foreign again
   test="$(jq -c ".[$i]" "$dir/tests.json")"
   actions="$dir/actions.d/land-${i}"
   : > "$actions.tmp"
-  issue="$(jq -r .issue <<< "$test")"; kind="$(jq -r .kind <<< "$test")"; runtime="$(jq -r .runtime <<< "$test")"
+  row="$(jq -r .row <<< "$test")"; kind="$(jq -r .kind <<< "$test")"; runtime="$(jq -r .runtime <<< "$test")"
   version="$(jq -r .version <<< "$test")"; full="$(jq -r .full <<< "$test")"; key="$(jq -r .key <<< "$test")"
   suites="$(jq -r '.suites // [] | join(" ")' <<< "$test")"
-  comment="$dir/comments/${issue}.md"
+  comment="$dir/comments/${row}.md"
   build="$(status "$dir" "lang-result-${key}-build")"
   # held by its bump (an ML release without a wheel for the -gpu image's CUDA, ml-bump exit 4):
-  # closed, nobody asked, the pins stay; a newer release with the wheel is a new issue
+  # done, nobody asked, the pins stay; a newer release with the wheel is a new row
   if [ "$build" = held ]; then
     note="$(head -n 1 "$dir/results/lang-result-${key}-build/held" 2>/dev/null || true)"
     {
@@ -890,8 +929,7 @@ cmd_land_one() {
       echo ""
       echo "Run: ${run_url}."
     } > "$comment"
-    printf 'comment\t%s\t%s\nclose\t%s\tnot planned\n' "$issue" "$comment" "$issue" >> "$actions.tmp"
-    [ "$(jq -r '.outage // false' <<< "$test")" != true ] || printf 'unlabel\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" >> "$actions.tmp"
+    row_line "$row" held "${note:-held by its bump}" >> "$actions.tmp"
     mv "$actions.tmp" "$actions"
     return 0
   fi
@@ -938,7 +976,7 @@ cmd_land_one() {
   if [ -n "$outage" ] && [ "$retest" != true ]; then
     # nobody is asked: the next run tests it again (plan: the label is no reason to wait)
     {
-      echo "**Outage: ${runtime} ${full} was not tested to the end.** Something the test depends on failed: an upstream server's HTTP 5xx, or the registry inside RunR's e2e cluster (below). That is not this release's fault. Nothing was published or committed, and nobody needs to act: the next run of the language bot tests it again (label \`${OUTAGE_LABEL}\`); a second outage in a row asks a person."
+      echo "**Outage: ${runtime} ${full} was not tested to the end.** Something the test depends on failed: an upstream server's HTTP 5xx, or the registry inside RunR's e2e cluster (below). That is not this release's fault. Nothing was published or committed, and nobody needs to act: the next run of the language bot tests it again (its row: \`upstream outage\`); a second outage in a row asks a person."
       echo ""
       echo "$lines"
       for name in $failed; do
@@ -954,7 +992,9 @@ cmd_land_one() {
       echo ""
       echo "Run: ${run_url}."
     } > "$comment"
-    printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" "$issue" "$comment" >> "$actions.tmp"
+    note=""
+    for name in $failed; do note="${note:+${note}; }${name}: $(upstream_of "$dir" "lang-result-${key}-${name}" | head -n 1 | sed 's/^[[:space:]]*//' | cut -c1-160)"; done
+    row_line "$row" "upstream outage" "an outage, the next run tests it again: ${note}" >> "$actions.tmp"
     mv "$actions.tmp" "$actions"
     return 0
   fi
@@ -977,14 +1017,15 @@ cmd_land_one() {
         echo "</details>"
       done
       echo ""
-      echo "Run: ${run_url}. Fix it (or decide the version waits), then run **Actions → Language tests → Run workflow** with this issue's number; a newer release supersedes this issue by itself."
+      echo "Run: ${run_url}. Fix it (or decide the version waits), then run **Actions → Language tests → Run workflow** with the row's key (\`${row}\`); a newer release supersedes the row by itself."
     } > "$comment"
-    printf 'label\t%s\t%s\ncomment\t%s\t%s\n' "$issue" "$ATTENTION_LABEL" "$issue" "$comment" >> "$actions.tmp"
-    [ "$retest" != true ] || printf 'unlabel\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" >> "$actions.tmp"
+    note=""
+    for name in $failed; do note="${note:+${note}; }${name}: $(short_of "$dir" "lang-result-${key}-${name}")"; done
+    [ -z "$outage" ] || note="an outage the second run in a row: ${note}"
+    row_line "$row" "needs attention" "$note" >> "$actions.tmp"
     mv "$actions.tmp" "$actions"
     return 0
   fi
-  [ "$retest" != true ] || printf 'unlabel\t%s\t%s\n' "$issue" "$OUTAGE_LABEL" >> "$actions.tmp"
 
   # green: the change on top of main as it is now, after the landings before it in this run
   tested="$(cat "$dir/results/lang-result-${key}-build/sha")"
@@ -1000,7 +1041,7 @@ cmd_land_one() {
     | awk 'NF == 1 { print $1 }' | paste -sd ' ' -)"
   if [ -n "$foreign" ]; then
     echo "**${runtime} ${full} passed on ${tested:0:12}, but main changed \`${paths[*]}\` since then (${foreign}).** Nothing was committed: the next run tests it again on the new main (${run_url})." > "$comment"
-    printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
+    row_line "$row" new "passed on ${tested:0:12}, but main changed ${paths[*]} since (${foreign}): the next run tests it again" >> "$actions.tmp"
     mv "$actions.tmp" "$actions"
     return 0
   fi
@@ -1041,7 +1082,7 @@ cmd_land_one() {
             tail -n 20 "$dir/bump-again-${i}.out"
             echo '```'
           } > "$comment"
-          printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
+          row_line "$row" new "passed, but its change does not apply to main any more and its bump does not run there: the next run tests it again" >> "$actions.tmp"
           mv "$actions.tmp" "$actions"
           return 0
         fi
@@ -1062,7 +1103,7 @@ cmd_land_one() {
             echo "</details>"
           } > "$comment"
           git reset -q --hard
-          printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
+          row_line "$row" new "passed, but made again on the new main it is not the change the bot tested: the next run tests it again" >> "$actions.tmp"
           mv "$actions.tmp" "$actions"
           return 0
         fi
@@ -1076,7 +1117,7 @@ cmd_land_one() {
   esac
   if git diff --quiet; then
     echo "**Nothing to do: main has ${runtime} ${full} already** (${run_url})." > "$comment"
-    printf 'comment\t%s\t%s\nclose\t%s\n' "$issue" "$comment" "$issue" >> "$actions.tmp"
+    row_line "$row" "done" "main has ${runtime} ${full} already" >> "$actions.tmp"
     mv "$actions.tmp" "$actions"
     return 0
   fi
@@ -1099,7 +1140,7 @@ EOF
   push_main || rc=$?
   if [ "$rc" != 0 ]; then
     echo "**${runtime} ${full} passed, but main moved while the bot committed it.** Nothing was pushed: the next run tests it again (${run_url})." > "$comment"
-    printf 'comment\t%s\t%s\n' "$issue" "$comment" >> "$actions.tmp"
+    row_line "$row" new "passed, but main moved while the bot committed it: the next run tests it again" >> "$actions.tmp"
     mv "$actions.tmp" "$actions"
     return 0
   fi
@@ -1118,7 +1159,10 @@ EOF
     echo ""
     echo "Run: ${run_url}."
   } > "$comment"
-  printf 'label\t%s\t%s\ncomment\t%s\t%s\nclose\t%s\npublish\t%s\n' "$issue" "$PASSED_LABEL" "$issue" "$comment" "$issue" "$publish" >> "$actions.tmp"
+  note="main ${sha:0:12}; the publish workflow publishes ${images// /, }${note}"
+  [ -z "$deprecated" ] || note="${note}; deprecates ${deprecated}"
+  row_line "$row" published "$note" >> "$actions.tmp"
+  printf 'publish\t%s\n' "$publish" >> "$actions.tmp"
   mv "$actions.tmp" "$actions"
 }
 
@@ -1126,6 +1170,7 @@ command="${1:-}"
 shift || true
 case "$command" in
   plan) cmd_plan "$@" ;;
+  plan-updates) cmd_plan_updates "$@" ;;
   ml-bump) cmd_ml_bump "$@" ;;
   wasm-bump) cmd_wasm_bump "$@" ;;
   tool-bump) cmd_tool_bump "$@" ;;

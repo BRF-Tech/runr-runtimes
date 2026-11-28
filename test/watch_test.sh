@@ -9,8 +9,9 @@
 # (Maven), a framework release newer than its pin, a WebAssembly toolchain newer than its ARG and
 # a newer released series of a base image the reqs mirror pins (alpine, debian by its codename,
 # node's even majors, python, golang; not a pre-release or an odd node major)
-# are findings with the titles the workflows file issues by, that an image that follows its
-# upstream or a release the language bot tested already is none, and that an upstream that does
+# are findings with the titles the weekly issue's rows have (their keys the report files' names),
+# that an image that follows its upstream or a release the language bot tested already is none,
+# and that an upstream that does
 # not answer fails the watch with the rest still checked (an end of life also without Docker Hub).
 #
 #   bash test/watch_test.sh
@@ -234,5 +235,5 @@ rm -rf "$reports"
 cmd_watch --report="$reports" > "$tmp/out" 2>&1 || true
 [ ! -f "$reports/python-3.13.10.md" ] && [ -f "$reports/python-3.16.0.md" ] && grep -qF '✓ 3.13: archived (ghcr.io/brf-tech/runr/exec-python:eol-3.13)' "$tmp/out" \
   || fail "an archived version was followed: $(cat "$tmp/out")"
-grep -qF 'archives it by itself and closes this issue' "$reports/python-3.10-eol.md" || fail "the end-of-life notice: $(cat "$reports/python-3.10-eol.md")"
+grep -qF 'archives it by itself and marks this row archived' "$reports/python-3.10-eol.md" || fail "the end-of-life notice: $(cat "$reports/python-3.10-eol.md")"
 echo "ok - an archived version is followed no more; the end-of-life notice says the bot archives it"

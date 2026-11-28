@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Tests ci/lang-bot.sh, the language bot's steps, without GitHub, PyPI or RunR: issues are a JSON
-# file as `gh issue list` writes it, PyPI, GitHub's release assets and ziglang.org answer from
+# Tests ci/lang-bot.sh, the language bot's steps, without GitHub, PyPI or RunR: the weekly issue's
+# rows are a JSON file as ci/weekly.sh rows writes it, PyPI, GitHub's release assets and ziglang.org answer from
 # fixtures (WATCH_FIXTURES), RunR is a throwaway checkout with its catalog, main a bare git
 # repository. Whatever this checkout pins (the bot moves the pins, its tests run on the moved
 # ones), every bump goes from the pin it finds to the next release, and tested-versions and the
 # lifecycle start from fixtures. Checks that:
 #   - the plan tests the newest release of each language version (every runtime of RUNTIME_DEFS),
 #     tool of a language image, ML runtime and WebAssembly toolchain with the RunR suites that
-#     deploy its images, supersedes the older ones, skips an end-of-life notice, a passed issue, one
-#     of a runtime it does not know and one that waits for a person unless the run names it, and
-#     marks the second chance of one an upstream outage stopped;
+#     deploy its images, supersedes the older ones, skips an end-of-life notice, a row that is done,
+#     a person's decision, one of a runtime it does not know and one that waits for a person unless
+#     the run names it, marks the second chance of one an upstream outage stopped, and takes its
+#     rows as testing (a superseded one superseded);
 #   - an ML bump moves torch with the torchvision pip installs next to it (the newest whose torch
 #     requirement admits it: an exact pin or a range), both built on the -gpu image's CUDA wheel
 #     index (none: held, exit 4, nothing moves), and tensorflow's CPU and CUDA pins together;
@@ -35,12 +36,13 @@
 #   - landing: a green version, ML pin or toolchain is committed on top of main and pushed as a
 #     fast-forward with the bot's identity and trailer, and one publish after the last landing
 #     takes every image the landed tests touched (a tool's pin too, a new Bun minor with the
-#     lifecycle of the one before), a suite RunR's release does not have yet counts as skipped, a
-#     red one or one without a result is labelled with what failed (never an empty log), one an
-#     outage stopped is labelled for the next run (a second outage in a row asks a person), a
-#     version whose runtime changed on main since the tested commit is left for the next run, a
-#     held ML release is closed as not planned, a version past its end of life is archived (its
-#     records on main, the issue closed) and one whose registry step fails asks a person;
+#     lifecycle of the one before), each row published, a suite RunR's release does not have yet
+#     counts as skipped, a red one or one without a result needs attention with what failed in its
+#     row (RunR's failed cases, never an empty log in its report), one an outage stopped is tested
+#     by the next run (a second outage in a row asks a person), a version whose runtime changed on
+#     main since the tested commit is left for the next run, a held ML release is held, a version
+#     past its end of life is archived (its records on main, its row archived) and one whose
+#     registry step fails asks a person;
 #   - the five green toolchains of run 43020609005 (rust, spin, tinygo, wasm-tools, zig) on one
 #     base all land, a patch whose lines moved made again on the new main; one made again with
 #     other lines waits for the next run, and one the bot cannot land is reported while the others
@@ -85,55 +87,70 @@ tested_fixture java "21.0 21.0.13" > "$repo/runtimes/java/tested-versions"
 no_lifecycle "$here/runtimes/bun/runtime.yaml" > "$repo/runtimes/bun/runtime.yaml"
 
 # --- the plan ---------------------------------------------------------------------------------------
-cat > "$tmp/issues.json" <<'EOF'
-[
-  {"number": 30, "title": "lang: python 3.13.10 released", "labels": []},
-  {"number": 25, "title": "lang: python 3.13.9 released", "labels": [{"name": "needs attention"}]},
-  {"number": 31, "title": "lang: python 3.16.0 released", "labels": []},
-  {"number": 32, "title": "lang: nodejs 24.23.0 released", "labels": [{"name": "needs attention"}]},
-  {"number": 33, "title": "lang: pytorch 2.15.0 released", "labels": []},
-  {"number": 34, "title": "lang: tinygo 0.43.0 released", "labels": []},
-  {"number": 35, "title": "lang: python 3.10 end of life 2026-10-31", "labels": []},
-  {"number": 36, "title": "lang: php 8.3.28 released", "labels": [{"name": "lang: passed"}]},
-  {"number": 37, "title": "lang: python 3.16 released", "labels": []},
-  {"number": 38, "title": "deps: something else", "labels": []},
-  {"number": 39, "title": "lang: spin 4.2.0 released", "labels": []},
-  {"number": 29, "title": "lang: spin 4.1.1 released", "labels": []},
-  {"number": 41, "title": "lang: componentize-py 0.26.0 released", "labels": []},
-  {"number": 42, "title": "lang: cobol 3.5.0 released", "labels": []},
-  {"number": 44, "title": "lang: java 25.0.6 released", "labels": []},
-  {"number": 45, "title": "lang: maven 3.9.17 released", "labels": []},
-  {"number": 46, "title": "lang: maven 3.9.18 released", "labels": []},
-  {"number": 47, "title": "lang: bun 1.5.0 released", "labels": []},
-  {"number": 48, "title": "lang: maven-dependency-plugin 3.12.0 released", "labels": []},
-  {"number": 49, "title": "lang: maven 3.9 released", "labels": []},
-  {"number": 50, "title": "lang: zig 0.17.1 released", "labels": [{"name": "lang: upstream outage"}]},
-  {"number": 55, "title": "lang: php 8.2 end of life 2026-12-31", "labels": []},
-  {"number": 56, "title": "lang: go 1.25 end of life 2026-11-11", "labels": []}
-]
+cat > "$tmp/rows.json" <<'EOF'
+{"issue": 70, "week": "2026-W46", "rows": [
+  {"key": "python-3.13.10", "title": "lang: python 3.13.10 released", "state": "new"},
+  {"key": "python-3.13.9", "title": "lang: python 3.13.9 released", "state": "needs attention"},
+  {"key": "python-3.16.0", "title": "lang: python 3.16.0 released", "state": "testing"},
+  {"key": "nodejs-24.23.0", "title": "lang: nodejs 24.23.0 released", "state": "needs attention"},
+  {"key": "pytorch-2.15.0", "title": "lang: pytorch 2.15.0 released", "state": "new"},
+  {"key": "pytorch-2.14.1", "title": "lang: pytorch 2.14.1 released", "state": "held", "note": "held: no cu126 wheel"},
+  {"key": "tinygo-0.43.0", "title": "lang: tinygo 0.43.0 released", "state": "new"},
+  {"key": "python-3.10-eol", "title": "lang: python 3.10 end of life 2026-10-31", "state": "new"},
+  {"key": "php-8.3.28", "title": "lang: php 8.3.28 released", "state": "published"},
+  {"key": "python-3.16", "title": "lang: python 3.16 released", "state": "new"},
+  {"key": "base-alpine-3.24", "title": "base: alpine 3.24 available", "state": "a person's decision"},
+  {"key": "spin-4.2.0", "title": "lang: spin 4.2.0 released", "state": "new"},
+  {"key": "spin-4.1.1", "title": "lang: spin 4.1.1 released", "state": "new"},
+  {"key": "componentize-py-0.26.0", "title": "lang: componentize-py 0.26.0 released", "state": "new"},
+  {"key": "cobol-3.5.0", "title": "lang: cobol 3.5.0 released", "state": "new"},
+  {"key": "java-25.0.6", "title": "lang: java 25.0.6 released", "state": "new"},
+  {"key": "maven-3.9.17", "title": "lang: maven 3.9.17 released", "state": "new"},
+  {"key": "maven-3.9.18", "title": "lang: maven 3.9.18 released", "state": "new"},
+  {"key": "bun-1.5.0", "title": "lang: bun 1.5.0 released", "state": "new"},
+  {"key": "maven-dependency-plugin-3.12.0", "title": "lang: maven-dependency-plugin 3.12.0 released", "state": "new"},
+  {"key": "maven-3.9", "title": "lang: maven 3.9 released", "state": "new"},
+  {"key": "zig-0.17.1", "title": "lang: zig 0.17.1 released", "state": "upstream outage"},
+  {"key": "ruby-4.0.9", "title": "lang: ruby 4.0.9 released", "state": "superseded"},
+  {"key": "php-8.2-eol", "title": "lang: php 8.2 end of life 2026-12-31", "state": "held", "until": "2026-12-31"},
+  {"key": "go-1.25-eol", "title": "lang: go 1.25 end of life 2026-11-11", "state": "held", "until": "2026-11-11"}
+]}
 EOF
 export LANG_TODAY=2026-11-11
-plan="$(bash "$bot" plan "$tmp/issues.json")"
-[ "$(jq -c '[.tests[] | [.issue, .kind, .runtime, .version, .full, .key]] | sort' <<<"$plan")" = '[[30,"language","python","3.13","3.13.10","python-3.13"],[31,"language","python","3.16","3.16.0","python-3.16"],[33,"ml","pytorch","2.15","2.15.0","pytorch"],[34,"wasm","tinygo","0.43.0","0.43.0","wasm-tinygo"],[39,"wasm","spin","4.2.0","4.2.0","wasm-spin"],[41,"wasm","componentize-py","0.26.0","0.26.0","wasm-componentize-py"],[44,"language","java","25.0","25.0.6","java-25.0"],[46,"tool","maven","3.9.18","3.9.18","java-maven"],[47,"language","bun","1.5","1.5.0","bun-1.5"],[48,"tool","maven-dependency-plugin","3.12.0","3.12.0","java-maven-dependency-plugin"],[50,"wasm","zig","0.17.1","0.17.1","wasm-zig"]]' ] \
+plan="$(bash "$bot" plan "$tmp/rows.json")"
+[ "$(jq -c '[.tests[] | [.row, .kind, .runtime, .version, .full, .key]] | sort' <<<"$plan")" = '[["bun-1.5.0","language","bun","1.5","1.5.0","bun-1.5"],["componentize-py-0.26.0","wasm","componentize-py","0.26.0","0.26.0","wasm-componentize-py"],["java-25.0.6","language","java","25.0","25.0.6","java-25.0"],["maven-3.9.18","tool","maven","3.9.18","3.9.18","java-maven"],["maven-dependency-plugin-3.12.0","tool","maven-dependency-plugin","3.12.0","3.12.0","java-maven-dependency-plugin"],["python-3.13.10","language","python","3.13","3.13.10","python-3.13"],["python-3.16.0","language","python","3.16","3.16.0","python-3.16"],["pytorch-2.15.0","ml","pytorch","2.15","2.15.0","pytorch"],["spin-4.2.0","wasm","spin","4.2.0","4.2.0","wasm-spin"],["tinygo-0.43.0","wasm","tinygo","0.43.0","0.43.0","wasm-tinygo"],["zig-0.17.1","wasm","zig","0.17.1","0.17.1","wasm-zig"]]' ] \
   || fail "tests: $(jq -c .tests <<<"$plan")"
 # the suites: the main e2e of a language and of a tool's image, its ML case, the WebAssembly suites
 # that deploy the images of a toolchain (none for wasm-python's, which only the smoke test checks)
 [ "$(jq -c '[.tests[] | [.key, .suites]]' <<<"$plan")" = '[["bun-1.5",["test"]],["java-25.0",["test"]],["java-maven",["test"]],["java-maven-dependency-plugin",["test"]],["python-3.13",["test"]],["python-3.16",["test"]],["pytorch",["test-ml"]],["wasm-componentize-py",[]],["wasm-spin",["test-wasm","test-images"]],["wasm-tinygo",["test-images"]],["wasm-zig",["test-images"]]]' ] \
   || fail "suites: $(jq -c '[.tests[] | [.key, .suites]]' <<<"$plan")"
-# an upstream outage stopped #50 the run before: it is tested again, as its second chance
-[ "$(jq -c '[.tests[] | select(.outage) | .issue]' <<<"$plan")" = '[50]' ] || fail "the outage's second chance: $(jq -c .tests <<<"$plan")"
-[ "$(jq -c '[.superseded[] | [.issue, .by]] | sort' <<<"$plan")" = '[[25,30],[29,39],[45,46]]' ] || fail "superseded: $(jq -c .superseded <<<"$plan")"
+# an upstream outage stopped zig the run before: it is tested again, as its second chance; a row
+# a cancelled run left testing is tested
+[ "$(jq -c '[.tests[] | select(.outage) | .row]' <<<"$plan")" = '["zig-0.17.1"]' ] || fail "the outage's second chance: $(jq -c .tests <<<"$plan")"
+[ "$(jq -c '[.superseded[] | [.row, .by]] | sort' <<<"$plan")" = '[["maven-3.9.17","maven-3.9.18"],["python-3.13.9","python-3.13.10"],["spin-4.1.1","spin-4.2.0"]]' ] || fail "superseded: $(jq -c .superseded <<<"$plan")"
 [ "$(jq -c .attention <<<"$plan")" = '[]' ] || fail "attention: $(jq -c .attention <<<"$plan")"
-for i in 32 36 37 42 49 55 56; do jq -e --argjson i "$i" '.skipped[] | select(.issue == $i)' <<<"$plan" >/dev/null || fail "#${i} not skipped: $plan"; done
+for r in nodejs-24.23.0 php-8.3.28 python-3.16 base-alpine-3.24 cobol-3.5.0 maven-3.9 php-8.2-eol go-1.25-eol pytorch-2.14.1 ruby-4.0.9; do
+  jq -e --arg r "$r" '.skipped[] | select(.row == $r)' <<<"$plan" >/dev/null || fail "${r} not skipped: $plan"
+done
+[ "$(jq -r '.skipped[] | select(.row == "base-alpine-3.24") | .reason' <<<"$plan")" = "a person's decision: the bot does not test a base image's series" ] \
+  && [ "$(jq -r '.skipped[] | select(.row == "pytorch-2.14.1") | .reason' <<<"$plan")" = "done already (held)" ] || fail "the reasons: $(jq -c .skipped <<<"$plan")"
 # an end of life whose date is past is archived (python 3.10); one still ahead, or today's, is a
 # notice for people until then (php 8.2, go 1.25)
-[ "$(jq -c .archive <<<"$plan")" = '[{"issue":35,"runtime":"python","version":"3.10","eol":"2026-10-31"}]' ] || fail "the archive: $(jq -c .archive <<<"$plan")"
-plan="$(bash "$bot" plan "$tmp/issues.json" --only=32)"
-[ "$(jq -c '[.tests[].issue]' <<<"$plan")" = '[32]' ] && [ "$(jq -c .retrigger <<<"$plan")" = '[32]' ] && [ "$(jq -c .archive <<<"$plan")" = '[]' ] || fail "--only: $plan"
-[ "$(bash "$bot" plan "$tmp/issues.json" --only=35 | jq -c '[.archive[].issue]')" = '[35]' ] || fail "--only of an end of life"
+[ "$(jq -c .archive <<<"$plan")" = '[{"row":"python-3.10-eol","runtime":"python","version":"3.10","eol":"2026-10-31"}]' ] || fail "the archive: $(jq -c .archive <<<"$plan")"
+# the rows the plan takes, as updates of the weekly issue
+[ "$(bash "$bot" plan-updates <(echo "$plan") https://example.test/run/8 | jq -c '[.[] | [.key, .state]] | sort')" = '[["bun-1.5.0","testing"],["componentize-py-0.26.0","testing"],["java-25.0.6","testing"],["maven-3.9.17","superseded"],["maven-3.9.18","testing"],["maven-dependency-plugin-3.12.0","testing"],["python-3.10-eol","testing"],["python-3.13.10","testing"],["python-3.13.9","superseded"],["python-3.16.0","testing"],["pytorch-2.15.0","testing"],["spin-4.1.1","superseded"],["spin-4.2.0","testing"],["tinygo-0.43.0","testing"],["zig-0.17.1","testing"]]' ] \
+  || fail "plan-updates: $(bash "$bot" plan-updates <(echo "$plan") https://example.test/run/8)"
+bash "$bot" plan-updates <(echo "$plan") https://example.test/run/8 | jq -e 'all(.[]; .run == "https://example.test/run/8") and (.[] | select(.key == "maven-3.9.17") | .note | contains("by `maven-3.9.18`"))' >/dev/null \
+  || fail "plan-updates: the run and the superseding row"
+plan="$(bash "$bot" plan "$tmp/rows.json" --only=nodejs-24.23.0)"
+[ "$(jq -c '[.tests[].row]' <<<"$plan")" = '["nodejs-24.23.0"]' ] && [ "$(jq -c .retrigger <<<"$plan")" = '["nodejs-24.23.0"]' ] && [ "$(jq -c .archive <<<"$plan")" = '[]' ] || fail "--only: $plan"
+[ "$(bash "$bot" plan "$tmp/rows.json" --only=python-3.10-eol | jq -c '[.archive[].row]')" = '["python-3.10-eol"]' ] || fail "--only of an end of life"
+# a plain list of rows is a plan's input too
+[ "$(jq '.rows' "$tmp/rows.json" | bash "$bot" plan /dev/stdin | jq -c '[.tests[].row] | length')" = 11 ] || fail "a list of rows"
 unset LANG_TODAY
-bash "$bot" plan "$tmp/issues.json" --only='1;x' >/dev/null 2>&1 && fail "--only takes numbers only"
-echo "ok - the plan: the newest release per language version (Java, .NET, Ruby, Bun too), tool, ML runtime and toolchain with its RunR suites, the older superseded, a past end of life archived, an end of life ahead, passed, unknown and held issues skipped"
+bash "$bot" plan "$tmp/rows.json" --only='1;x' >/dev/null 2>&1 && fail "--only takes row keys only"
+bash "$bot" plan "$tmp/rows.json" --only='Ruby-4.0.10' >/dev/null 2>&1 && fail "--only takes lowercase keys"
+echo "ok - the plan: the newest release per language version (Java, .NET, Ruby, Bun too), tool, ML runtime and toolchain with its RunR suites, the older superseded, a past end of life archived, an end of life ahead, done rows, a person's decision, unknown and held rows skipped; its rows testing"
 
 # --- ML bump ----------------------------------------------------------------------------------------
 export WATCH_FIXTURES="$tmp/fixtures"
@@ -472,25 +489,25 @@ no_lifecycle "$here/runtimes/bun/runtime.yaml" > "$work/runtimes/bun/runtime.yam
 tested="$(git -C "$work" rev-parse HEAD)"
 dir="$tmp/lang"
 mkdir -p "$dir/results" "$dir/pins"
-# 45: the second chance after an upstream outage, green; 51: an upstream outage in the build; 52:
-# its second one in a row, in RunR's suite; 53: a red build whose step printed nothing
+# maven: the second chance after an upstream outage, green; zig: an upstream outage in the build;
+# rust: its second one in a row, in RunR's suite; wasm-tools: a red build whose step printed nothing
 cat > "$dir/tests.json" <<EOF
-[{"issue": 31, "kind": "language", "runtime": "python", "version": "3.16", "full": "3.16.0", "key": "python-3.16", "suites": ["test"]},
- {"issue": 30, "kind": "language", "runtime": "python", "version": "3.13", "full": "3.13.10", "key": "python-3.13", "suites": ["test"]},
- {"issue": 43, "kind": "language", "runtime": "nodejs", "version": "24.23", "full": "24.23.0", "key": "nodejs-24.23", "suites": ["test"]},
- {"issue": 33, "kind": "ml", "runtime": "pytorch", "version": "${torch_new%.*}", "full": "${torch_new}", "key": "pytorch", "suites": ["test-ml"]},
- {"issue": 34, "kind": "wasm", "runtime": "tinygo", "version": "${tinygo_new}", "full": "${tinygo_new}", "key": "wasm-tinygo", "suites": ["test-images"]},
- {"issue": 47, "kind": "language", "runtime": "bun", "version": "1.5", "full": "1.5.0", "key": "bun-1.5", "suites": ["test"]},
- {"issue": 45, "kind": "tool", "runtime": "maven", "version": "${maven_new}", "full": "${maven_new}", "key": "java-maven", "suites": ["test"], "outage": true},
- {"issue": 51, "kind": "wasm", "runtime": "zig", "version": "${zig_new}", "full": "${zig_new}", "key": "wasm-zig", "suites": ["test-images"], "outage": false},
- {"issue": 52, "kind": "wasm", "runtime": "rust", "version": "1.99.1", "full": "1.99.1", "key": "wasm-rust", "suites": ["test-wasm"], "outage": true},
- {"issue": 53, "kind": "wasm", "runtime": "wasm-tools", "version": "1.263.0", "full": "1.263.0", "key": "wasm-wasm-tools", "suites": ["test-images"]},
- {"issue": 57, "kind": "ml", "runtime": "pytorch", "version": "2.16", "full": "2.16.0", "key": "pytorch-held", "suites": ["test-ml"]}]
+[{"row": "python-3.16.0", "kind": "language", "runtime": "python", "version": "3.16", "full": "3.16.0", "key": "python-3.16", "suites": ["test"]},
+ {"row": "python-3.13.10", "kind": "language", "runtime": "python", "version": "3.13", "full": "3.13.10", "key": "python-3.13", "suites": ["test"]},
+ {"row": "nodejs-24.23.0", "kind": "language", "runtime": "nodejs", "version": "24.23", "full": "24.23.0", "key": "nodejs-24.23", "suites": ["test"]},
+ {"row": "pytorch-${torch_new}", "kind": "ml", "runtime": "pytorch", "version": "${torch_new%.*}", "full": "${torch_new}", "key": "pytorch", "suites": ["test-ml"]},
+ {"row": "tinygo-${tinygo_new}", "kind": "wasm", "runtime": "tinygo", "version": "${tinygo_new}", "full": "${tinygo_new}", "key": "wasm-tinygo", "suites": ["test-images"]},
+ {"row": "bun-1.5.0", "kind": "language", "runtime": "bun", "version": "1.5", "full": "1.5.0", "key": "bun-1.5", "suites": ["test"]},
+ {"row": "maven-${maven_new}", "kind": "tool", "runtime": "maven", "version": "${maven_new}", "full": "${maven_new}", "key": "java-maven", "suites": ["test"], "outage": true},
+ {"row": "zig-${zig_new}", "kind": "wasm", "runtime": "zig", "version": "${zig_new}", "full": "${zig_new}", "key": "wasm-zig", "suites": ["test-images"], "outage": false},
+ {"row": "rust-1.99.1", "kind": "wasm", "runtime": "rust", "version": "1.99.1", "full": "1.99.1", "key": "wasm-rust", "suites": ["test-wasm"], "outage": true},
+ {"row": "wasm-tools-1.263.0", "kind": "wasm", "runtime": "wasm-tools", "version": "1.263.0", "full": "1.263.0", "key": "wasm-wasm-tools", "suites": ["test-images"]},
+ {"row": "pytorch-2.16.0", "kind": "ml", "runtime": "pytorch", "version": "2.16", "full": "2.16.0", "key": "pytorch-held", "suites": ["test-ml"]}]
 EOF
-# 35: python 3.10 past its end of life, archived; 58: go 1.25, whose registry step fails
+# python 3.10 past its end of life, archived; go 1.25, whose registry step fails
 cat > "$dir/archive.json" <<'EOF'
-[{"issue": 35, "runtime": "python", "version": "3.10", "eol": "2026-10-01"},
- {"issue": 58, "runtime": "go", "version": "1.25", "eol": "2026-08-19"}]
+[{"row": "python-3.10-eol", "runtime": "python", "version": "3.10", "eol": "2026-10-01"},
+ {"row": "go-1.25-eol", "runtime": "go", "version": "1.25", "eol": "2026-08-19"}]
 EOF
 # the registry's side (eol_archive_image of lib/eol.sh, tested by test/eol_test.sh): the digest the
 # floating tag named, kept as eol-<version>
@@ -507,6 +524,8 @@ printf '3.13\n3.15\n' > "$dir/results/lang-result-python-3.16-build/published"
 result python-3.16-e2e-test success
 result python-3.13-build success
 result python-3.13-e2e-test failure
+printf '%s\n' '── Failures ──' '  ✗ xaas-python-3.13-http [ready]: Timeout (300s)' '  ✗ faas-python-3.13-http [version]: Build failed: error building image' '' '── Slowest ──' \
+  >> "$dir/results/lang-result-python-3.13-e2e-test/tail.txt"
 # nodejs: built, but its e2e reported nothing (the job was cancelled)
 result nodejs-24.23-build success
 result pytorch-build success
@@ -596,60 +615,73 @@ git --git-dir="$origin" show main:runtimes/java/Dockerfile | grep -qxF "ARG MAVE
   && git --git-dir="$origin" show main:runtimes/java/Dockerfile | grep -qxF "ARG MAVEN_SHA512=$(sha512 "maven ${maven_new}")" || fail "main's maven"
 [ "$(git --git-dir="$origin" for-each-ref --format='%(refname)')" = refs/heads/main ] || fail "other refs pushed"
 actions="$(cat "$dir/actions")"
-grep -qF "$(printf 'label\t31\tlang: passed')" <<<"$actions" || fail "green: ${actions}"
+# row KEY STATE: the action of a row (its note after it)
+has_row() { grep -qF "$(printf 'row\t%s\t%s\t' "$1" "$2")" <<<"$actions"; }
+note_of() { awk -F '\t' -v k="$1" '$1 == "row" && $2 == k { print $4 }' <<<"$actions"; }
+has_row python-3.16.0 published && [[ "$(note_of python-3.16.0)" == "main $(git --git-dir="$origin" rev-parse main~5 | cut -c1-12); the publish workflow publishes python" ]] \
+  || fail "green: ${actions}"
+# the actions are rows and the one publish, nothing for an issue of its own
+[ -z "$(grep -vE "$(printf '^(row|publish)\t')" <<<"$actions")" ] || fail "other actions: ${actions}"
 # one publish, the last action, for main as the run left it: every image the landed tests touched,
 # once, in the order they landed (python, pytorch, tinygo's wasm-exec and wasm-go, bun, maven's java)
 [ "$(grep -c "$(printf '^publish\t')" <<<"$actions")" = 1 ] && [ "$(tail -n 1 <<<"$actions")" = "$(printf 'publish\tpython,pytorch,wasm-exec,wasm-go,bun,java')" ] \
   || fail "one publish of the landed images: ${actions}"
-grep -qF "$(printf 'label\t30\tneeds attention')" <<<"$actions" || fail "red: ${actions}"
-grep -qF 'the end of the python-3.13-e2e-test log' "$dir/comments/30.md" || fail "red: the log: $(cat "$dir/comments/30.md")"
-grep -qF 'nothing to move' "$dir/comments/31.md" || fail "green: RunR's pins: $(cat "$dir/comments/31.md")"
-grep -qF "$(printf 'label\t43\tneeds attention')" <<<"$actions" && grep -qF 'test` on the candidate: no result' "$dir/comments/43.md" || fail "no e2e result: ${actions} $(cat "$dir/comments/43.md" 2>/dev/null)"
-grep -qF 'test-ml` on the candidate: skipped (RunR v0.6.7 has no ML case yet' "$dir/comments/33.md" || fail "ml: the skipped suite: $(cat "$dir/comments/33.md")"
-grep -qF "$(printf 'label\t34\tlang: passed')" <<<"$actions" || fail "wasm: ${actions}"
-grep -qF 'test-images` on the candidate: success' "$dir/comments/34.md" && grep -qF 'WASM_RUNTIME_VERSION' "$dir/comments/34.md" || fail "wasm: the comment: $(cat "$dir/comments/34.md")"
-grep -qF "$(printf 'label\t47\tlang: passed')" <<<"$actions" || fail "bun: ${actions}"
-grep -qF 'test` on the candidate: skipped (RunR v0.6.7 has no bun runtime yet' "$dir/comments/47.md" && grep -qF 'deprecates 1.4: deprecated 2026-11-07, sunset 2027-02-06' "$dir/comments/47.md" \
-  || fail "bun: the comment: $(cat "$dir/comments/47.md")"
-grep -qF "$(printf 'label\t45\tlang: passed')" <<<"$actions" || fail "maven: ${actions}"
-# maven passed on its second chance: the outage label goes
-grep -qF "$(printf 'unlabel\t45\tlang: upstream outage')" <<<"$actions" || fail "the outage label stayed on a green one: ${actions}"
-# python 3.10: closed with what was archived where; go 1.25: its registry refused, a person looks
-grep -qF "$(printf 'close\t35')" <<<"$actions" && grep -qF '**Archived: python 3.10** (end of life 2026-10-01)' "$dir/comments/35.md" \
-  && grep -qF "exec-python:eol-3.10" "$dir/comments/35.md" && ! grep -qF "$(printf 'label\t35')" <<<"$actions" || fail "the archive's issue: ${actions} $(cat "$dir/comments/35.md")"
-grep -qF "$(printf 'label\t58\tneeds attention')" <<<"$actions" && grep -qF 'the bot could not archive go 1.25' "$dir/comments/58.md" \
-  && grep -qF 'the registry refused exec-go:1.25' "$dir/comments/58.md" || fail "a failed archive: ${actions} $(cat "$dir/comments/58.md" 2>/dev/null)"
-# pytorch 2.16.0: held, closed as not planned, nobody asked
-grep -qF "$(printf 'close\t57\tnot planned')" <<<"$actions" && ! grep -qF "$(printf 'label\t57')" <<<"$actions" \
-  && grep -qF "**Held: pytorch 2.16.0** — held: no cu126 wheel of torch 2.16.0" "$dir/comments/57.md" && grep -qF "CPU and GPU stay on torch ${torch_old}" "$dir/comments/57.md" \
-  || fail "the held one: ${actions} $(cat "$dir/comments/57.md" 2>/dev/null)"
+# python 3.13: red, its row names RunR's failed cases, its report has the end of the log
+has_row python-3.13.10 "needs attention" && [ "$(note_of python-3.13.10)" = "e2e-test: failed: xaas-python-3.13-http [ready], faas-python-3.13-http [version]" ] || fail "red: ${actions}"
+grep -qF 'the end of the python-3.13-e2e-test log' "$dir/comments/python-3.13.10.md" || fail "red: the log: $(cat "$dir/comments/python-3.13.10.md")"
+grep -qF 'nothing to move' "$dir/comments/python-3.16.0.md" || fail "green: RunR's pins: $(cat "$dir/comments/python-3.16.0.md")"
+has_row nodejs-24.23.0 "needs attention" && [ "$(note_of nodejs-24.23.0)" = "e2e-test: no log (the job did not get that far)" ] \
+  && grep -qF 'test` on the candidate: no result' "$dir/comments/nodejs-24.23.0.md" || fail "no e2e result: ${actions} $(cat "$dir/comments/nodejs-24.23.0.md" 2>/dev/null)"
+grep -qF 'test-ml` on the candidate: skipped (RunR v0.6.7 has no ML case yet' "$dir/comments/pytorch-${torch_new}.md" || fail "ml: the skipped suite: $(cat "$dir/comments/pytorch-${torch_new}.md")"
+has_row "tinygo-${tinygo_new}" published || fail "wasm: ${actions}"
+grep -qF 'test-images` on the candidate: success' "$dir/comments/tinygo-${tinygo_new}.md" && grep -qF 'WASM_RUNTIME_VERSION' "$dir/comments/tinygo-${tinygo_new}.md" || fail "wasm: the report: $(cat "$dir/comments/tinygo-${tinygo_new}.md")"
+has_row bun-1.5.0 published && [[ "$(note_of bun-1.5.0)" == *"; deprecates 1.4: deprecated 2026-11-07, sunset 2027-02-06" ]] || fail "bun: ${actions}"
+grep -qF 'test` on the candidate: skipped (RunR v0.6.7 has no bun runtime yet' "$dir/comments/bun-1.5.0.md" && grep -qF 'deprecates 1.4: deprecated 2026-11-07, sunset 2027-02-06' "$dir/comments/bun-1.5.0.md" \
+  || fail "bun: the report: $(cat "$dir/comments/bun-1.5.0.md")"
+# maven passed on its second chance
+has_row "maven-${maven_new}" published || fail "maven: ${actions}"
+# python 3.10: archived, its row says where; go 1.25: its registry refused, a person looks
+has_row python-3.10-eol archived && [[ "$(note_of python-3.10-eol)" == "ghcr.io/brf-tech/runr/exec-python:eol-3.10 (sha256:000000000000…), the floating tag gone; main "* ]] \
+  && grep -qF '**Archived: python 3.10** (end of life 2026-10-01)' "$dir/comments/python-3.10-eol.md" && grep -qF "exec-python:eol-3.10" "$dir/comments/python-3.10-eol.md" \
+  || fail "the archive's row: ${actions} $(cat "$dir/comments/python-3.10-eol.md")"
+has_row go-1.25-eol "needs attention" && grep -qF 'the bot could not archive go 1.25' "$dir/comments/go-1.25-eol.md" \
+  && grep -qF 'the registry refused exec-go:1.25' "$dir/comments/go-1.25-eol.md" || fail "a failed archive: ${actions} $(cat "$dir/comments/go-1.25-eol.md" 2>/dev/null)"
+# pytorch 2.16.0: held with its reason, nobody asked
+has_row pytorch-2.16.0 held && [[ "$(note_of pytorch-2.16.0)" == "held: no cu126 wheel of torch 2.16.0 "* ]] \
+  && grep -qF "**Held: pytorch 2.16.0** — held: no cu126 wheel of torch 2.16.0" "$dir/comments/pytorch-2.16.0.md" && grep -qF "CPU and GPU stay on torch ${torch_old}" "$dir/comments/pytorch-2.16.0.md" \
+  || fail "the held one: ${actions} $(cat "$dir/comments/pytorch-2.16.0.md" 2>/dev/null)"
 # zig: an outage, nobody is asked; the next run tests it again
-grep -qF "$(printf 'label\t51\tlang: upstream outage')" <<<"$actions" && ! grep -qF "$(printf 'label\t51\tneeds attention')" <<<"$actions" || fail "the outage: ${actions}"
-grep -qF '**Outage: zig' "$dir/comments/51.md" && grep -qF 'wasi-sdk-34.0-x86_64-linux.tar.gz (HTTP 504)' "$dir/comments/51.md" \
-  && grep -qF 'test-images` on the candidate: not run (the build failed)' "$dir/comments/51.md" || fail "the outage's comment: $(cat "$dir/comments/51.md")"
-# rust: the second outage in a row asks a person, the outage label goes
-grep -qF "$(printf 'label\t52\tneeds attention')" <<<"$actions" && grep -qF "$(printf 'unlabel\t52\tlang: upstream outage')" <<<"$actions" || fail "a second outage: ${actions}"
-grep -qF 'the second run in a row' "$dir/comments/52.md" && grep -qF 'test-wasm` on the candidate: failure (run once more after an outage) (an outage)' "$dir/comments/52.md" \
-  || fail "a second outage's comment: $(cat "$dir/comments/52.md")"
-# wasm-tools: red, and its comment says the log is empty instead of an empty block
-grep -qF "$(printf 'label\t53\tneeds attention')" <<<"$actions" && grep -qF 'the log is empty' "$dir/comments/53.md" || fail "an empty log: $(cat "$dir/comments/53.md")"
+has_row "zig-${zig_new}" "upstream outage" && [[ "$(note_of "zig-${zig_new}")" == "an outage, the next run tests it again: build: #10 28.19 download failed: https://github.com/WebAssembly/wasi-sdk/"* ]] \
+  || fail "the outage: ${actions}"
+grep -qF '**Outage: zig' "$dir/comments/zig-${zig_new}.md" && grep -qF 'wasi-sdk-34.0-x86_64-linux.tar.gz (HTTP 504)' "$dir/comments/zig-${zig_new}.md" \
+  && grep -qF 'test-images` on the candidate: not run (the build failed)' "$dir/comments/zig-${zig_new}.md" || fail "the outage's report: $(cat "$dir/comments/zig-${zig_new}.md")"
+# rust: the second outage in a row asks a person
+has_row rust-1.99.1 "needs attention" && [[ "$(note_of rust-1.99.1)" == "an outage the second run in a row: e2e-test-wasm: "* ]] || fail "a second outage: ${actions}"
+grep -qF 'the second run in a row' "$dir/comments/rust-1.99.1.md" && grep -qF 'test-wasm` on the candidate: failure (run once more after an outage) (an outage)' "$dir/comments/rust-1.99.1.md" \
+  || fail "a second outage's report: $(cat "$dir/comments/rust-1.99.1.md")"
+# wasm-tools: red, its row and its report say the log is empty instead of an empty block
+has_row wasm-tools-1.263.0 "needs attention" && [ "$(note_of wasm-tools-1.263.0)" = "build: the log is empty" ] \
+  && grep -qF 'the log is empty' "$dir/comments/wasm-tools-1.263.0.md" || fail "an empty log: ${actions} $(cat "$dir/comments/wasm-tools-1.263.0.md")"
+# a row's note is one line
+[ "$(grep -c "$(printf '^row\t')" <<<"$actions")" = 13 ] || fail "13 rows: ${actions}"
 for c in "$dir"/comments/*.md; do
   if awk 'prev == "```" && $0 == "```" { found = 1 } { prev = $0 } END { exit !found }' "$c"; then fail "an empty block in $(basename "$c"): $(cat "$c")"; fi
 done
-echo "ok - landing: green versions, tool and ML pins and toolchains on main as fast-forwards with the bot's identity and their publish, a new Bun minor deprecating the one before, a suite or runtime RunR has not yet skipped, a red one or one without a result labelled with its log (never an empty one), an upstream outage tested again by the next run, the second in a row labelled"
+echo "ok - landing: green versions, tool and ML pins and toolchains on main as fast-forwards with the bot's identity and their publish, their rows published, a new Bun minor deprecating the one before, a suite or runtime RunR has not yet skipped, a red one or one without a result needs attention with what failed (never an empty log), an upstream outage tested again by the next run, the second in a row needs attention"
 
 # main changed the runtime since the tested commit: left for the next run
 (cd "$work" && git fetch -q origin && git checkout -q --detach origin/main && echo "# changed" >> runtimes/python/Dockerfile && git commit -q -am "python: a change" && git push -q origin HEAD:refs/heads/main)
 echo '[]' > "$dir/archive.json"
 cat > "$dir/tests.json" <<'EOF'
-[{"issue": 40, "kind": "language", "runtime": "python", "version": "3.17", "full": "3.17.0", "key": "python-3.17", "suites": ["test"]}]
+[{"row": "python-3.17.0", "kind": "language", "runtime": "python", "version": "3.17", "full": "3.17.0", "key": "python-3.17", "suites": ["test"]}]
 EOF
 result python-3.17-build success
 result python-3.17-e2e-test success
 before="$(git --git-dir="$origin" rev-parse main)"
 (cd "$work" && LANG_BOT_NAME=b LANG_BOT_EMAIL=b@example.test bash ci/lang-bot.sh land "$dir" https://example.test/run/10) > "$tmp/out" 2>&1 || fail "land: $(cat "$tmp/out")"
 [ "$(git --git-dir="$origin" rev-parse main)" = "$before" ] || fail "committed on a main whose runtime changed"
-grep -qF 'main changed `runtimes/python/`' "$dir/comments/40.md" || fail "the comment: $(cat "$dir/comments/40.md")"
+grep -qF 'main changed `runtimes/python/`' "$dir/comments/python-3.17.0.md" && grep -qF "$(printf 'row\tpython-3.17.0\tnew\tpassed on ')" "$dir/actions" \
+  || fail "the report: $(cat "$dir/comments/python-3.17.0.md" "$dir/actions")"
 grep -q "$(printf '^publish\t')" "$dir/actions" && fail "a publish with nothing landed: $(cat "$dir/actions")"
 echo "ok - a version whose runtime changed on main since the tested commit is left for the next run"
 
@@ -678,11 +710,11 @@ combo() {
   cp -r "$here/ci" "$here/lib" "$cwork/"
   (cd "$cwork" && git add -A && git commit -q -m base && git remote add origin "$corigin" && git push -q origin main)
   ctested="$(git -C "$cwork" rev-parse HEAD)"
-  local spec issue tool ver suite key r n=0
+  local spec tool ver suite key r n=0
   : > "$cdir/tests.lines"
-  for spec in "60 rust ${new_rust} test-wasm" "61 spin ${spin_new} test-wasm" "62 tinygo ${tinygo_new} test-images" \
-    "63 wasm-tools ${wt_new} test-images" "64 zig ${zig_new} test-images"; do
-    read -r issue tool ver suite <<<"$spec"
+  for spec in "rust ${new_rust} test-wasm" "spin ${spin_new} test-wasm" "tinygo ${tinygo_new} test-images" \
+    "wasm-tools ${wt_new} test-images" "zig ${zig_new} test-images"; do
+    read -r tool ver suite <<<"$spec"
     key="wasm-${tool}" r="$cdir/results/lang-result-wasm-${tool}-build"
     mkdir -p "$r" "$cdir/results/lang-result-${key}-e2e-${suite}"
     (cd "$cwork" && bash ci/lang-bot.sh wasm-bump "$tool" "$ver" > "$r/bump.json" && git diff > "$r/pin.patch" && git checkout -q -- .)
@@ -690,8 +722,8 @@ combo() {
     jq -r '.images | join(" ")' "$r/bump.json" > "$r/images"
     echo success > "$r/status"; echo "$ctested" > "$r/sha"; echo "the end of the log" > "$r/tail.txt"
     echo success > "$cdir/results/lang-result-${key}-e2e-${suite}/status"
-    jq -nc --argjson i "$issue" --arg r "$tool" --arg v "$ver" --arg k "$key" --arg s "$suite" \
-      '{issue: $i, kind: "wasm", runtime: $r, version: $v, full: $v, key: $k, suites: [$s]}' >> "$cdir/tests.lines"
+    jq -nc --arg r "$tool" --arg v "$ver" --arg k "$key" --arg s "$suite" \
+      '{row: "\($r)-\($v)", kind: "wasm", runtime: $r, version: $v, full: $v, key: $k, suites: [$s]}' >> "$cdir/tests.lines"
     n=$((n + 1))
     if [ "$n" = 3 ] && [ -n "${2:-}" ]; then echo "$2" >> "$cdir/tests.lines"; fi
   done
@@ -716,11 +748,11 @@ for f in runtimes/wasm-exec/Dockerfile runtimes/wasm-go/Dockerfile runtimes/wasm
   [ "$(git --git-dir="$corigin" show "main:$f")" = "$(cat "$tmp/combo-ref/$f")" ] || fail "main's ${f} is not the five bumps: $(git --git-dir="$corigin" diff "$ctested" main -- "$f")"
 done
 actions="$(cat "$cdir/actions")"
-for i in 60 61 62 63 64; do
-  grep -qF "$(printf 'label\t%s\tlang: passed' "$i")" <<<"$actions" && grep -qF "$(printf 'close\t%s' "$i")" <<<"$actions" || fail "#${i} not passed: ${actions}"
+for r in "rust-${new_rust}" "spin-${spin_new}" "tinygo-${tinygo_new}" "wasm-tools-${wt_new}" "zig-${zig_new}"; do
+  grep -qF "$(printf 'row\t%s\tpublished\t' "$r")" <<<"$actions" || fail "${r} not published: ${actions}"
 done
-grep -qF 'made again on main' "$cdir/comments/62.md" && git --git-dir="$corigin" log -1 --format=%B --grep="^fix(wasm): tinygo" main | tr '\n' ' ' | grep -qF 'Made again on main' \
-  || fail "tinygo was not made again after rust's mirror line: $(cat "$cdir/comments/62.md")"
+grep -qF 'made again on main' "$cdir/comments/tinygo-${tinygo_new}.md" && git --git-dir="$corigin" log -1 --format=%B --grep="^fix(wasm): tinygo" main | tr '\n' ' ' | grep -qF 'Made again on main' \
+  || fail "tinygo was not made again after rust's mirror line: $(cat "$cdir/comments/tinygo-${tinygo_new}.md")"
 [ "$(git --git-dir="$corigin" log -5 --format='%an <%ae>|%(trailers:key=RunR-Lang-Bot,valueonly,separator=%x2C)' main | grep -c "^${bot_id}|[a-z-]* [0-9.]*$")" = 5 ] \
   || fail "the five commits' identity and trailer: $(git --git-dir="$corigin" log -5 --format='%an <%ae>|%B' main)"
 # one publish for the five (run 43047649717 dispatched five of the same commit): their images once
@@ -731,7 +763,7 @@ echo "ok - five green toolchains of one base land one after the other, those who
 # made again, zig's checksums are other ones (its index changed since the build): not committed, the
 # next run tests it; a test the bot cannot land (its result has no tested commit) is reported and the
 # others still land
-combo combo2 '{"issue": 65, "kind": "wasm", "runtime": "spin-sdk", "version": "9.9.9", "full": "9.9.9", "key": "wasm-broken", "suites": []}'
+combo combo2 '{"row": "spin-sdk-9.9.9", "kind": "wasm", "runtime": "spin-sdk", "version": "9.9.9", "full": "9.9.9", "key": "wasm-broken", "suites": []}'
 mkdir -p "$cdir/results/lang-result-wasm-broken-build"
 echo success > "$cdir/results/lang-result-wasm-broken-build/status"
 echo wasm-python > "$cdir/results/lang-result-wasm-broken-build/images"
@@ -742,11 +774,11 @@ fx https://ziglang.org/download/index.json "$zig_index"
 [ "$(git --git-dir="$corigin" log --format='%s' main | head -n 4 | sed 's/ .*//' | paste -sd ' ' -)" = "fix(wasm): fix(wasm): fix(wasm): fix(wasm):" ] \
   && ! git --git-dir="$corigin" log --format='%s' main | grep -qF 'zig' || fail "zig with other checksums was committed: $(git --git-dir="$corigin" log --format='%s' main)"
 actions="$(cat "$cdir/actions")"
-grep -qF 'is not the change the bot tested' "$cdir/comments/64.md" && grep -qF "$(printf 'comment\t64\t')" <<<"$actions" \
-  && ! grep -qE "$(printf '(label|close)\t64')" <<<"$actions" || fail "zig made again otherwise: ${actions} $(cat "$cdir/comments/64.md" 2>/dev/null)"
-grep -qF "$(printf 'label\t65\tneeds attention')" <<<"$actions" && grep -qF 'the bot could not land spin-sdk 9.9.9' "$cdir/comments/65.md" \
-  || fail "the broken one: ${actions} $(cat "$cdir/comments/65.md" 2>/dev/null)"
-for i in 60 61 62 63; do grep -qF "$(printf 'label\t%s\tlang: passed' "$i")" <<<"$actions" || fail "#${i} after the broken one: ${actions}"; done
+grep -qF 'is not the change the bot tested' "$cdir/comments/zig-${zig_new}.md" && grep -qF "$(printf 'row\tzig-%s\tnew\tpassed, but made again' "$zig_new")" <<<"$actions" \
+  || fail "zig made again otherwise: ${actions} $(cat "$cdir/comments/zig-${zig_new}.md" 2>/dev/null)"
+grep -qF "$(printf 'row\tspin-sdk-9.9.9\tneeds attention\tthe bot could not land it')" <<<"$actions" && grep -qF 'the bot could not land spin-sdk 9.9.9' "$cdir/comments/spin-sdk-9.9.9.md" \
+  || fail "the broken one: ${actions} $(cat "$cdir/comments/spin-sdk-9.9.9.md" 2>/dev/null)"
+for r in "rust-${new_rust}" "spin-${spin_new}" "tinygo-${tinygo_new}" "wasm-tools-${wt_new}"; do grep -qF "$(printf 'row\t%s\tpublished\t' "$r")" <<<"$actions" || fail "${r} after the broken one: ${actions}"; done
 # the one publish: the images of the four that landed (zig's wasm-exec through tinygo's and spin's)
 [ "$(grep -c "$(printf '^publish\t')" <<<"$actions")" = 1 ] && [ "$(tail -n 1 <<<"$actions")" = "$(printf 'publish\twasm-rust,wasm-exec,wasm-go,wasm-js,wasm-python')" ] \
   || fail "one publish of the four: ${actions}"
