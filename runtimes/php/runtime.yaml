@@ -13,6 +13,8 @@ versionDiscovery:
   repository: ghcr.io/brf-tech/runr/exec-php
   image: "ghcr.io/brf-tech/runr/exec-php:{version}"
   eol: php
+  lifecycle:
+    "8.2": {deprecated: "2026-11-28", sunset: "2026-12-31"}
 handler:
   file: main
   function: handler
